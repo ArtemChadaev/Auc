@@ -1,6 +1,5 @@
 import {Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle} from "~/components/ui/card";
 import {Button} from "~/components/ui/button";
-import {type NavigateFunction, redirect} from "react-router";
 import {Field, FieldDescription, FieldLabel} from "~/components/ui/field";
 import {Input} from "~/components/ui/input";
 
@@ -14,7 +13,7 @@ const StepRegister = () => {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Field onSubmit={() => {sendCode()}}>
+        <Field>
           <div className="flex items-center justify-between">
             <FieldLabel htmlFor="otp-verification">
               Email
@@ -28,7 +27,7 @@ const StepRegister = () => {
       </CardContent>
       <CardFooter>
         <Field>
-          <Button className="w-full" type="submit">
+          <Button className="w-full">
             Send code
           </Button>
         </Field>
@@ -37,9 +36,4 @@ const StepRegister = () => {
   )
 }
 
-const sendCode = () => {
-  //Todo: Сделать отправку на бэк с проверками и т.д. е забыть ошибки выводить
-  redirect("/register/confirm");
-  return
-}
 export default StepRegister
