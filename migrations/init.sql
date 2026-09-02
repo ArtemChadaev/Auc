@@ -115,11 +115,27 @@ create unique index ux_hold_user_lot_active on hold (lot_id, user_id) where stat
 
 -- TODO: Индексы сделать остальные для скорости!!!
 
-create table polices (
+create table documents (
     id bigint generated always as identity primary key,
     name text not null,
     version text not null default '1.0',
-    created_at timestamptz not null default now(),
+    is_major bool not null default true,
     text json not null,
+    published_at timestamptz not null default now(),
+    superseded_at timestamptz default null,
     unique (name, version)
 );
+create unique index on documents (name) where superseded_at is null;
+
+CREATE TABLE user_consents (
+    id          bigint generated always as identity primary key,
+    document_id bigint not null references documents(id),
+    user_id     bigint REFERENCES users(id),   -- NULL для гостя
+    anon_id     uuid,                          -- для гостя, до регистрации
+    action      text NOT NULL CHECK (action IN ('granted','withdrawn')),
+    granted_at  timestamptz NOT NULL DEFAULT now(),
+    ip          inet,
+    source      text NOT NULL,   -- gate0|registration|upload|bid|settings|reaccept
+    constraint user_consents_user_or_anon CHECK (user_id IS NOT NULL OR anon_id IS NOT NULL)
+);
+CREATE INDEX ON user_consents (user_id, document_id, granted_at DESC);
