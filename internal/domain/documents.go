@@ -1,6 +1,10 @@
 package domain
 
-import "errors"
+import (
+	"errors"
+	"net/netip"
+	"time"
+)
 
 type Consents struct {
 	UserID *int64
@@ -30,4 +34,16 @@ type NumberedList struct {
 	Line []NumberedList
 }
 
+type UserConsents struct {
+	id        int64
+	userID    int64
+	action    string
+	grantedAt time.Time
+	ip        *netip.Addr
+	source    string
+}
+
+// TODO: Если понадобится и когда будет точно известно какие типы, типизировать source в user_consents
+
 var ErrDocumentNotFound = errors.New("document not found")
+var ErrDocumentNotUserAnonID = errors.New("not have to save ID in user_consents")
