@@ -2,23 +2,28 @@ package main
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/ArtemChadaev/Auction/cmd/cfg"
 	"github.com/ArtemChadaev/Auction/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
+	if err := cfg.Init(); err != nil {
+		log.Fatal("error parsing config", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Для теста потом нормально переделаю
-	var host string = "localhost"
-	if os.Getenv("DEPLOY") == "true" {
+	host := "localhost"
+	if cfg.Cfg.Deploy {
 		host = "postgres"
 	}
 	pool, err := pgxpool.New(context.Background(), "postgresql://test:password@"+host+":5432/db")

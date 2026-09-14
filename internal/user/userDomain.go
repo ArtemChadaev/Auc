@@ -1,8 +1,6 @@
 package user
 
 import (
-	"os"
-	"strconv"
 	"time"
 )
 
@@ -30,10 +28,3 @@ type userSession struct {
 	RevokedAt *time.Time `db:"revoked_at"`
 	Device    Device     `db:"device"`
 }
-
-var (
-	accessSecret     = os.Getenv("JWT_ACCESS_SECRET")
-	refreshSecret    = os.Getenv("JWT_REFRESH_SECRET")
-	secureCookies    = os.Getenv("DEPLOY") == "true"
-	expiredTokens, _ = strconv.Atoi(os.Getenv("JWT_EXPIRED_TOKENS"))
-)
