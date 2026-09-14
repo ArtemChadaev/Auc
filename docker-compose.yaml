@@ -1,3 +1,4 @@
+# Так чтобы заработало на серваке создать папку, туда docker-compose.yml с .env, Caddyfile и мб еще чтото
 services:
   postgres:
     image: postgres:17-alpine
@@ -10,3 +11,20 @@ services:
       - "5432:5432"
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
+  caddy:
+    image: caddy:alpine
+    restart: unless-stopped
+    container_name: caddy
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+#  backend:
+#    image: ghcr.io
+#    ports:
+#      - "8080:8080"
+#    restart: unless-stopped
+#    env_file:
+#      - .env
