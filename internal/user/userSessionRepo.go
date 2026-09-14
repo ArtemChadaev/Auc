@@ -42,5 +42,6 @@ func (r *Repo) revokedToken(ctx context.Context, tokenID int64) error {
 }
 
 func (r *Repo) updateToken(ctx context.Context, tokenID int64) error {
-	_, err := r.db.Exec(ctx, "UPDATE user_sessions SET expires_at = $1 WHERE id = $2 AND expires_at > now() AND expires_at - INTERVAL '7 days' < now()", time.Now().UTC().Add(expiredTokens*time.Hour), tokenID)
+	_, err := r.db.Exec(ctx, "UPDATE user_sessions SET expires_at = $1 WHERE id = $2 AND expires_at > now() AND expires_at - INTERVAL '7 days' < now()", time.Now().UTC().Add(time.Duration(expiredTokens)*time.Hour), tokenID)
+	return err
 }

@@ -16,7 +16,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := pgxpool.New(context.Background(), "postgresql://test:password@localhost:5432/db")
+	// Для теста потом нормально переделаю
+	var host string = "localhost"
+	if os.Getenv("DEPLOY") == "true" {
+		host = "postgres"
+	}
+	pool, err := pgxpool.New(context.Background(), "postgresql://test:password@"+host+":5432/db")
 	if err != nil {
 		panic(err)
 	}

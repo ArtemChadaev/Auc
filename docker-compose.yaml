@@ -11,6 +11,11 @@ services:
       - "5432:5432"
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
   caddy:
     image: caddy:alpine
     restart: unless-stopped
@@ -21,10 +26,17 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
     extra_hosts:
       - "host.docker.internal:host-gateway"
-#  backend:
-#    image: ghcr.io
-#    ports:
-#      - "8080:8080"
-#    restart: unless-stopped
-#    env_file:
-#      - .env
+  go:
+    image: ghcr.io/artemchadaev/auc-go:v0.1
+    environment:
+      - DEPLOY=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    ports:
+      - "8080:8080"
+  react:
+    image: ghcr.io/artemchadaev/auc-react:v0.1
+    ports:
+      - "3000:3000"
