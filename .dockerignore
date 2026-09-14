@@ -1,0 +1,7 @@
+frontend
+migrations
+postgres_data
+.env
+.env.example
+.gitignore
+Caddyfile
