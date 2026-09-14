@@ -1,4 +1,4 @@
-package handler
+package httpx
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 )
 
 // Переделать перепроверить
-func writeJSON(w http.ResponseWriter, status int, data any) {
+func WriteJSON(w http.ResponseWriter, status int, data any) {
 	js, err := json.Marshal(data)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -17,12 +17,14 @@ create unique index users_email_lower_key on users (lower(email)) where deleted_
 create table user_sessions (
     id bigint generated always as identity primary key,
     user_id bigint not null references users(id),
-    refresh_token_hash text not null unique,
+    refresh_token_hash bytea not null unique,
     created_at timestamptz not null default now(),
     expires_at timestamptz not null,
     revoked_at timestamptz default null,
     device jsonb
 );
+
+create index user_sessions_allow on user_sessions (user_id) WHERE revoked_at is null;
 
 -- так в виде item сделать файл, как набор (пак) фотографий (рисунков или еще чегото) или 3d модели, м.б. все сжатое в архиф
 create table items (

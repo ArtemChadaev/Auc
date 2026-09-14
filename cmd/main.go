@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/ArtemChadaev/Auction/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,6 +24,21 @@ func main() {
 		panic(err)
 	}
 	defer pool.Close()
-	//repository.DBTX(pool.Query, pool.QueryRow, pool.Exec)
+
+	mux := http.NewServeMux()
+
+	user.NewHandler(user.NewService(user.NewRepo(pool))).Routes(mux)
+
+	srv := &http.Server{
+		Addr:              ":8080",
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+	}
+
+	go func() {
+		_ = srv.ListenAndServe()
+	}()
+
 	<-ctx.Done()
 }
