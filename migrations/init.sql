@@ -1,7 +1,8 @@
+begin;
 -- balance сделать проверку (мб в бд) что не может быть меньше 0, пользователь может распоряжатся balanca - hold
 -- Если ставит на ставку где уже есть прошлая, то balance - hold + hold_bid
 create table  users (
-    id bigint generated always as identity primary key,
+    id uuid primary key default uuidv7(),
     name text not null,
     email text not null,
     password_hash text not null,
@@ -18,12 +19,12 @@ create unique index users_email_lower_key on users (lower(email)) where deleted_
 -- refresh_token надо в хэш
 create table user_sessions (
     id bigint generated always as identity primary key,
-    user_id bigint not null references users(id),
+    user_id uuid not null references users(id),
     refresh_token_hash bytea not null unique constraint user_sessions_64 check (octet_length(refresh_token_hash) = 32),
     created_at timestamptz not null default now(),
     expires_at timestamptz not null,
     revoked_at timestamptz default null,
-    device jsonb
+    device jsonb default '{}'::jsonb
 );
 
 create index user_sessions_allow on user_sessions (user_id) WHERE revoked_at is null;
@@ -31,8 +32,8 @@ create index user_sessions_allow on user_sessions (user_id) WHERE revoked_at is 
 -- так в виде item сделать файл, как набор (пак) фотографий (рисунков или еще чегото) или 3d модели, м.б. все сжатое в архиф
 create table items (
     id bigint generated always as identity primary key,
-    creator_id bigint not null references users(id),
-    owner_id bigint not null references users(id),
+    creator_id uuid not null references users(id),
+    owner_id uuid not null references users(id),
 -- Я просто хз как хранить картинки и 3d мб объекты, наверное ссылка на чтото
 --     Статус на проверки bool добавить без этого нельзя выставить и никто кроме владельца не видит. м.б. реализовать с помщью ИИ еще
     created_at timestamptz not null default now()
@@ -42,10 +43,10 @@ create table items (
 -- Типо будет 1 лот и история торгов его
 create table lots (
     id bigint generated always as identity primary key,
-    seller_id bigint not null references users(id),
+    seller_id uuid not null references users(id),
     item_id bigint not null references items(id),
     status text not null default 'draft' constraint status_is check (status in ('draft', 'active', 'finished', 'cancelled')),
-    winner_id bigint references users(id) default null,
+    winner_id uuid references users(id) default null,
     start_amount int not null check (start_amount > 0),
     min_step int not null check (min_step > 0),
     finish_amount int default null,
@@ -70,7 +71,7 @@ create unique index ux_lot_item_active on lots (item_id) WHERE status = 'active'
 -- И после считать что balance_after = amount следующему
 create table  ledger_entries (
     id bigint generated always as identity primary key,
-    user_id bigint not null references users(id),
+    user_id uuid not null references users(id),
     amount int not null constraint amount_not_null check (amount <> 0),
     balance_after int not null constraint balance_after_greater_zero check (balance_after >= 0),
     type text not null constraint type_is check (type in ('top_up', 'payout_of_winnings', 'transfer_to_seller')),
@@ -82,8 +83,8 @@ create table  ledger_entries (
 create table history_item (
     id bigint generated always as identity primary key,
     item_id bigint not null references items(id),
-    old_user bigint not null references users(id),
-    new_user bigint not null references users(id),
+    old_user uuid not null references users(id),
+    new_user uuid not null references users(id),
     created_at timestamptz not null default now(),
     -- если при выйгрыше аукционаа то lot_id вписан
     lot_id bigint references lots(id) default null,
@@ -97,7 +98,7 @@ create table history_item (
 create table bids (
     id bigint generated always as identity primary key,
     lot_id bigint not null references lots(id),
-    user_id bigint not null references users(id),
+    user_id uuid not null references users(id),
     amount int not null constraint amount_greater_zero check (amount > 0),
     idempotency_key uuid not null unique,
     created_at timestamptz not null default now(),
@@ -107,7 +108,7 @@ create table bids (
 create table hold (
     id bigint generated always as identity primary key,
     lot_id bigint not null references lots(id),
-    user_id bigint not null references users(id),
+    user_id uuid not null references users(id),
     bid_id bigint not null unique references bids(id),
     amount int not null constraint amount_greater_zero check (amount > 0),
     status text not null default 'active' constraint status_is check (status in ('active', 'released', 'captured')),
@@ -134,7 +135,7 @@ create unique index on documents (name) where superseded_at is null;
 CREATE TABLE user_consents (
     id          bigint generated always as identity primary key,
     document_id bigint not null references documents(id),
-    user_id     bigint REFERENCES users(id),   -- NULL для гостя
+    user_id     uuid references users(id),   -- NULL для гостя
     anon_id     uuid,                          -- для гостя, до регистрации
     action      text NOT NULL CHECK (action IN ('granted','withdrawn')),
     granted_at  timestamptz NOT NULL DEFAULT now(),
@@ -143,3 +144,5 @@ CREATE TABLE user_consents (
     constraint user_consents_user_or_anon CHECK (user_id IS NOT NULL OR anon_id IS NOT NULL)
 );
 CREATE INDEX ON user_consents (user_id, document_id, granted_at DESC);
+
+commit;

@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"uuid"
 
 	"github.com/ArtemChadaev/Auction/internal/httpx"
 )
 
 type service interface {
-	Auth(ctx context.Context, email string, password string) error
-	Register(ctx context.Context, name string, email string, password string) error
+	register(ctx context.Context, uid *uuid.UUID, name string, email string, password string, device Device) (Tokens, error)
+	authPassword(ctx context.Context, email string, password string, device Device) (Tokens, error)
+	authRefresh(ctx context.Context, refresh string) (Tokens, error)
+	tokenResponds(ctx context.Context, refresh string) (Session, error)
 }
 
 type Handler struct {
@@ -42,18 +45,43 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-
-	if err := h.service.Auth(r.Context(), req.Email, req.Pass); err != nil {
+	//TODO: На время заглушка потом переделать
+	device := Device{}
+	tokens, err := h.service.authPassword(r.Context(), req.Email, req.Pass, device)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, "111")
+
+	session, err := h.service.tokenResponds(r.Context(), tokens.RefreshToken)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	responds := tokenResponds{
+		AccessToken:  tokens.AccessToken,
+		RefreshToken: tokens.RefreshToken,
+		Session:      session,
+	}
+
+	cookie := &http.Cookie{
+		Name:     "refresh_token",
+		Value:    responds.RefreshToken,
+		Path:     "/api/auth",
+		Expires:  responds.Session.ExpiresAt,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	}
+	http.SetCookie(w, cookie)
+	httpx.WriteJSON(w, http.StatusOK, responds)
 }
 
 type registerReq struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	Pass  string `json:"password"`
+	ID    *uuid.UUID `json:"uid"`
+	Name  string     `json:"name"`
+	Email string     `json:"email"`
+	Pass  string     `json:"password"`
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
@@ -65,14 +93,38 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(err.Error(), "json: unknown field") {
 			http.Error(w, "json don't have this field", http.StatusBadRequest)
 		} else {
-			http.Error(w, "invalid request body", http.StatusBadRequest) // было StatusUnauthorized
+			http.Error(w, "invalid request body", http.StatusBadRequest)
 		}
 		return
 	}
-	if err := h.service.Register(r.Context(), req.Name, req.Email, req.Pass); err != nil {
+	device := Device{}
+	tokens, err := h.service.register(r.Context(), req.ID, req.Name, req.Email, req.Pass, device)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, "user "+req.Name+" registered")
+	session, err := h.service.tokenResponds(r.Context(), tokens.RefreshToken)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	responds := tokenResponds{
+		AccessToken:  tokens.AccessToken,
+		RefreshToken: tokens.RefreshToken,
+		Session:      session,
+	}
+
+	cookie := &http.Cookie{
+		Name:     "refresh_token",
+		Value:    responds.RefreshToken,
+		Path:     "/api/auth",
+		Expires:  responds.Session.ExpiresAt,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	}
+	http.SetCookie(w, cookie)
+	httpx.WriteJSON(w, http.StatusOK, responds)
 }
 
 func (h *Handler) Routes(mux *http.ServeMux) {

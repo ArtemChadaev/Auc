@@ -12,8 +12,8 @@ import (
 )
 
 type Tokens struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"-"`
+	AccessToken  string
+	RefreshToken string
 }
 
 func generateAccessToken(email string, uuid uuid.UUID) (string, error) {
@@ -27,7 +27,7 @@ func generateAccessToken(email string, uuid uuid.UUID) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
-	return token.SignedString(cfg.Cfg.JwtSecret)
+	return token.SignedString([]byte(cfg.Cfg.JwtSecret))
 }
 
 func createTokens(email string, uuid uuid.UUID) (Tokens, error) {
@@ -49,7 +49,7 @@ func createTokens(email string, uuid uuid.UUID) (Tokens, error) {
 func verifyAccessToken(accessToken string) (uuid.UUID, error) {
 	token, err := jwt.Parse(
 		accessToken,
-		func(token *jwt.Token) (interface{}, error) { return cfg.Cfg.JwtSecret, nil },
+		func(token *jwt.Token) (interface{}, error) { return []byte(cfg.Cfg.JwtSecret), nil },
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Name}),
 		jwt.WithExpirationRequired(),
 	)
