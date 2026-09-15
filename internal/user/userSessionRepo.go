@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (r *Repo) new(ctx context.Context, userID int64, refreshToken string, expiresAt time.Time, device Device) error {
+func (r *Repo) newToken(ctx context.Context, userID int64, refreshToken string, expiresAt time.Time, device Device) error {
 	_, err := r.db.Exec(ctx, "INSERT INTO user_sessions(user_id, refresh_token_hash, expires_at, device) values ($1, $2, $4, $5)", userID, refreshToken, expiresAt, device)
 	return err
 }
@@ -21,7 +21,10 @@ func (r *Repo) findToken(ctx context.Context, refreshToken string) (userSession,
 		return session, err
 	}
 	session, err = pgx.CollectExactlyOneRow(row, pgx.RowToStructByName[userSession])
-	return session, err
+	if err != nil {
+		return session, err
+	}
+	return session, nil
 }
 
 func (r *Repo) findAllTokens(ctx context.Context, userID int64) ([]userSession, error) {
@@ -43,6 +46,6 @@ func (r *Repo) revokedToken(ctx context.Context, tokenID int64) error {
 }
 
 func (r *Repo) updateToken(ctx context.Context, tokenID int64) error {
-	_, err := r.db.Exec(ctx, "UPDATE user_sessions SET expires_at = $1 WHERE id = $2 AND expires_at > now() AND expires_at - INTERVAL '7 days' < now()", time.Now().UTC().Add(time.Duration(cfg.Cfg.ExpiredToken)*time.Hour), tokenID)
+	_, err := r.db.Exec(ctx, "UPDATE user_sessions SET expires_at = $1 WHERE id = $2 AND expires_at > now() AND expires_at - INTERVAL '7 days' < now()", time.Now().UTC().Add(time.Duration(cfg.Cfg.ExpiredRefreshToken)*time.Hour), tokenID)
 	return err
 }

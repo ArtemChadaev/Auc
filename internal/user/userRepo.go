@@ -15,7 +15,7 @@ func NewRepo(db storage.DBTX) *Repo {
 }
 
 // return pass or err
-func (r *Repo) Login(ctx context.Context, email string) (string, error) {
+func (r *Repo) login(ctx context.Context, email string) (string, error) {
 	row := r.db.QueryRow(ctx, "select password_hash from users where email = $1", email)
 	var password string
 	if err := row.Scan(&password); err != nil {
@@ -24,8 +24,8 @@ func (r *Repo) Login(ctx context.Context, email string) (string, error) {
 	return password, nil
 }
 
-// test register
-func (r *Repo) MiniRegister(ctx context.Context, name string, email string, password string) error {
+// TODO: Херня переделать test register
+func (r *Repo) miniRegister(ctx context.Context, name string, email string, password string) error {
 	_, err := r.db.Exec(ctx, "insert into users(name, email, password_hash) values($1, $2, $3)", name, email, password)
 	return err
 }

@@ -12,12 +12,14 @@ create table  users (
     constraint users_balance_greater_hold check (balance >= hold)
 );
 
+-- TODO: переделать на uuid а так же добавить индекс для uuid + email в user_sessions (при проверке refresh и создания access token надо)
+
 create unique index users_email_lower_key on users (lower(email)) where deleted_at is null;
 -- refresh_token надо в хэш
 create table user_sessions (
     id bigint generated always as identity primary key,
     user_id bigint not null references users(id),
-    refresh_token_hash bytea not null unique,
+    refresh_token_hash bytea not null unique constraint user_sessions_64 check (octet_length(refresh_token_hash) = 32),
     created_at timestamptz not null default now(),
     expires_at timestamptz not null,
     revoked_at timestamptz default null,
