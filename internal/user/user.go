@@ -21,10 +21,11 @@ type repo interface {
 	getEmailForID(ctx context.Context, uid uuid.UUID) (string, error)
 
 	newToken(ctx context.Context, userID uuid.UUID, refreshToken []byte, device Device) error
-	findToken(ctx context.Context, refreshToken []byte) (Session, error)
+	findCurrentToken(ctx context.Context, refreshToken []byte) (Session, error)
 	findAllTokens(ctx context.Context, userID uuid.UUID) ([]Session, error)
-	revokedToken(ctx context.Context, tokenID int64) error
-	updateToken(ctx context.Context, tokenID int64) error
+	findAllCurrentTokens(ctx context.Context, userID uuid.UUID) ([]Session, error)
+	revokedToken(ctx context.Context, tokenID int64, uid uuid.UUID) error
+	updateToken(ctx context.Context, refreshToken []byte) error
 }
 
 type Service struct {
@@ -132,7 +133,7 @@ func (s *Service) authPassword(ctx context.Context, email string, password strin
 
 func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, error) {
 	sha := sha256.Sum256([]byte(refresh))
-	userSession, err := s.repo.findToken(ctx, sha[:])
+	userSession, err := s.repo.findCurrentToken(ctx, sha[:])
 	if err != nil {
 		return Tokens{}, err
 	}
@@ -142,7 +143,7 @@ func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, erro
 	// Токен закончится раньше чем через 7 дней
 	if userSession.ExpiresAt.Before(time.Now().UTC().Add(7 * 24 * time.Hour)) {
 		// Если произошла ошибка то пропускаем, если нет то еще раз его получаем, TODO: ПЕРЕПРОВЕРИТЬ ВЫГЛЯДИТ ОПАСНО
-		if err = s.repo.updateToken(ctx, userSession.ID); err != nil {
+		if err = s.repo.updateToken(ctx, sha[:]); err != nil {
 			return s.authRefresh(ctx, refresh)
 		}
 	}
@@ -155,5 +156,20 @@ func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, erro
 
 func (s *Service) tokenResponds(ctx context.Context, refresh string) (Session, error) {
 	sha := sha256.Sum256([]byte(refresh))
-	return s.repo.findToken(ctx, sha[:])
+	return s.repo.findCurrentToken(ctx, sha[:])
+}
+
+func (s *Service) logout(ctx context.Context, refreshId []int64, uid uuid.UUID) error {
+	var err error
+	for _, id := range refreshId {
+		err = s.repo.revokedToken(ctx, id, uid)
+	}
+	return err
+}
+
+func (s *Service) findTokens(ctx context.Context, uid uuid.UUID, current bool) ([]Session, error) {
+	if current {
+		return s.repo.findAllCurrentTokens(ctx, uid)
+	}
+	return s.repo.findAllTokens(ctx, uid)
 }

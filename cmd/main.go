@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
+	"github.com/ArtemChadaev/Auction/internal/httpx/middleware"
 	"github.com/ArtemChadaev/Auction/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/justinas/alice"
 )
 
 func main() {
@@ -36,12 +38,14 @@ func main() {
 	defer pool.Close()
 
 	mux := http.NewServeMux()
-
-	user.NewHandler(user.NewService(user.NewRepo(pool))).Routes(mux)
+	globalChain := alice.New(middleware.Logger)
+	userHandler := user.NewHandler(user.NewService(user.NewRepo(pool)))
+	authChain := alice.New(middleware.AuthAccessToken)
+	mux.Handle("/api/auth/", http.StripPrefix("/api/auth", userHandler.Routes(authChain)))
 
 	srv := &http.Server{
 		Addr:              ":8080",
-		Handler:           mux,
+		Handler:           globalChain.Then(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Second,
 	}

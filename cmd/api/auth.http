@@ -1,0 +1,35 @@
+POST http://localhost:8080/api/auth/register
+Accept: application/json
+
+{
+    "name": "Art",
+    "email": "asdffwe@saaw.awsd",
+    "password": "123123123"
+}
+###
+POST http://localhost:8080/api/auth/login
+Accept: application/json
+
+{
+    "email": "asdffwe@saaw.awsd",
+    "password": "123123123"
+}
+
+> handler.js
+
+###
+POST localhost:8080/api/auth/logout
+Authorization:Bearer {{auth_token}}
+Accept: application/json
+
+{
+    "refresh_id": [6, 7, 8, 9]
+}
+###
+POST localhost:8080/api/auth/session
+Authorization:Bearer {{auth_token}}
+Accept: application/json
+
+{
+    "current": true
+}

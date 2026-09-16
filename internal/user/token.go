@@ -30,26 +30,15 @@ func generateAccessToken(email string, uuid uuid.UUID) (string, error) {
 	return token.SignedString([]byte(cfg.Cfg.JwtSecret))
 }
 
-func createTokens(email string, uuid uuid.UUID) (Tokens, error) {
-	var tokens Tokens
-	var err error
-	tokens.AccessToken, err = generateAccessToken(email, uuid)
-	if err != nil {
-		return tokens, err
-	}
-	rt := make([]byte, 32)
-	if _, err = rand.Read(rt); err != nil {
-		return tokens, err
-	}
-	tokens.RefreshToken = hex.EncodeToString(rt)
-	return tokens, nil
+func keyFunc() jwt.Keyfunc {
+	return func(_ *jwt.Token) (interface{}, error) { return []byte(cfg.Cfg.JwtSecret), nil }
 }
 
-// email, error
-func verifyAccessToken(accessToken string) (uuid.UUID, error) {
+// VerifyAccessToken uuid, error
+func VerifyAccessToken(accessToken string) (uuid.UUID, error) {
 	token, err := jwt.Parse(
 		accessToken,
-		func(token *jwt.Token) (interface{}, error) { return []byte(cfg.Cfg.JwtSecret), nil },
+		keyFunc(),
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Name}),
 		jwt.WithExpirationRequired(),
 	)
@@ -65,4 +54,19 @@ func verifyAccessToken(accessToken string) (uuid.UUID, error) {
 	}
 
 	return uuid.Parse(claims["uuid"].(string))
+}
+
+func createTokens(email string, uuid uuid.UUID) (Tokens, error) {
+	var tokens Tokens
+	var err error
+	tokens.AccessToken, err = generateAccessToken(email, uuid)
+	if err != nil {
+		return tokens, err
+	}
+	rt := make([]byte, 32)
+	if _, err = rand.Read(rt); err != nil {
+		return tokens, err
+	}
+	tokens.RefreshToken = hex.EncodeToString(rt)
+	return tokens, nil
 }

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/ArtemChadaev/Auction/cmd/cfg"
 	"github.com/ArtemChadaev/Auction/internal/httpx"
+	"github.com/justinas/alice"
 )
 
 type service interface {
@@ -15,6 +17,8 @@ type service interface {
 	authPassword(ctx context.Context, email string, password string, device Device) (Tokens, error)
 	authRefresh(ctx context.Context, refresh string) (Tokens, error)
 	tokenResponds(ctx context.Context, refresh string) (Session, error)
+	logout(ctx context.Context, refreshId []int64, uid uuid.UUID) error
+	findTokens(ctx context.Context, uid uuid.UUID, current bool) ([]Session, error)
 }
 
 type Handler struct {
@@ -32,6 +36,11 @@ type userReq struct {
 	Pass  string `json:"password"`
 }
 
+func getDevice(r *http.Request) Device {
+
+	return Device{}
+}
+
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var req userReq
 
@@ -46,8 +55,8 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//TODO: На время заглушка потом переделать
-	device := Device{}
-	tokens, err := h.service.authPassword(r.Context(), req.Email, req.Pass, device)
+
+	tokens, err := h.service.authPassword(r.Context(), req.Email, req.Pass, getDevice(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -97,8 +106,8 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	device := Device{}
-	tokens, err := h.service.register(r.Context(), req.ID, req.Name, req.Email, req.Pass, device)
+
+	tokens, err := h.service.register(r.Context(), req.ID, req.Name, req.Email, req.Pass, getDevice(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -127,7 +136,82 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, responds)
 }
 
-func (h *Handler) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/auth/login", h.login)
-	mux.HandleFunc("POST /api/auth/register", h.register)
+type refreshIdReq struct {
+	ID []int64 `json:"refresh_id"`
+}
+
+func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+	//TODO: переделать в отдельный метод чтобы не повторятся каждый раз
+	var req refreshIdReq
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		if strings.HasPrefix(err.Error(), "json: unknown field") {
+			http.Error(w, "json don't have this field", http.StatusBadRequest)
+		} else {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+		}
+		return
+	}
+
+	uid, err := cfg.GetUID(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if err := h.service.logout(r.Context(), req.ID, uid); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, nil)
+}
+
+type findRefreshReq struct {
+	Current *bool `json:"current,omitempty"`
+}
+
+func (h *Handler) findRefresh(w http.ResponseWriter, r *http.Request) {
+	var req findRefreshReq
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		if strings.HasPrefix(err.Error(), "json: unknown field") {
+			http.Error(w, "json don't have this field", http.StatusBadRequest)
+		} else {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+		}
+		return
+	}
+
+	uid, err := cfg.GetUID(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	var current bool
+	if req.Current == nil {
+		current = true
+	} else {
+		current = *req.Current
+	}
+	sessions, err := h.service.findTokens(r.Context(), uid, current)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+	httpx.WriteJSON(w, http.StatusOK, sessions)
+}
+
+func (h *Handler) Routes(chain alice.Chain) http.Handler {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /login", h.login)
+	mux.HandleFunc("POST /register", h.register)
+
+	mux.Handle("POST /logout", chain.ThenFunc(h.logout))
+	mux.Handle("POST /session", chain.ThenFunc(h.findRefresh))
+
+	return mux
 }

@@ -47,7 +47,7 @@ func (d *Device) Scan(value interface{}) error {
 }
 
 type Session struct {
-	ID        int64      `db:"id" json:"-"`
+	ID        int64      `db:"id" json:"refresh_id"`
 	UserID    uuid.UUID  `db:"user_id" json:"-"`
 	TokenHash []byte     `db:"refresh_token_hash" json:"-"`
 	CreatedAt time.Time  `db:"created_at" json:"created_at"`
