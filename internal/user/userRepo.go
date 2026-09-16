@@ -17,7 +17,7 @@ func NewRepo(db storage.DBTX) *Repo {
 
 // return pass or err
 func (r *Repo) login(ctx context.Context, email string) (uuid.UUID, string, error) {
-	row := r.db.QueryRow(ctx, "select id, password_hash from users where email = $1", email)
+	row := r.db.QueryRow(ctx, "select id, password_hash from users where email = lower($1)", email)
 	var id uuid.UUID
 	var password string
 	if err := row.Scan(&id, &password); err != nil {
@@ -27,7 +27,7 @@ func (r *Repo) login(ctx context.Context, email string) (uuid.UUID, string, erro
 }
 
 func (r *Repo) register(ctx context.Context, id uuid.UUID, name string, email string, password string) error {
-	_, err := r.db.Exec(ctx, "insert into users(id, name, email, password_hash) values($1, $2, $3, $4)", id, name, email, password)
+	_, err := r.db.Exec(ctx, "insert into users(id, name, email, password_hash) values($1, $2, lower($3), $4)", id, name, email, password)
 	return err
 }
 
@@ -38,4 +38,8 @@ func (r *Repo) getEmailForID(ctx context.Context, uid uuid.UUID) (string, error)
 		return "", err
 	}
 	return email, nil
+}
+
+func (r *Repo) getBalanceH() {
+
 }

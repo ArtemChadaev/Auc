@@ -4,7 +4,7 @@ begin;
 create table  users (
     id uuid primary key default uuidv7(),
     name text not null,
-    email text not null,
+    email text not null constraint users_email_lower check (email = lower(email) ),
     password_hash text not null,
     deleted_at timestamptz default null,
     balance int not null default 0,
