@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
+	"github.com/ArtemChadaev/Auction/cmd/logger"
 	"github.com/ArtemChadaev/Auction/internal/httpx/middleware"
 	"github.com/ArtemChadaev/Auction/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,8 +18,10 @@ import (
 )
 
 func main() {
+	logger.Init()
 	if err := cfg.Init(); err != nil {
-		log.Fatal("error parsing config", err)
+		slog.Error("main.config", err)
+		return
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -30,10 +33,11 @@ func main() {
 	}
 	pool, err := pgxpool.New(context.Background(), "postgresql://test:password@"+host+":5432/db")
 	if err != nil {
-		panic(err)
+		slog.Error("main.db", err)
+		return
 	}
-	if err := pool.Ping(ctx); err != nil {
-		panic(err)
+	if err = pool.Ping(ctx); err != nil {
+		slog.Error("main.db", err)
 	}
 	defer pool.Close()
 
