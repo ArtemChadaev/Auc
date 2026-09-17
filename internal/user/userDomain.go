@@ -8,14 +8,14 @@ import (
 	"uuid"
 )
 
-type user struct {
-	id        int64
-	name      string
-	email     string
-	deletedAt *time.Time
-	balance   int
-	hold      int
-	created   time.Time
+type User struct {
+	Id        uuid.UUID  `db:"id" json:"id"`
+	Name      string     `db:"name" json:"name"`
+	Email     string     `db:"email" json:"email"`
+	DeletedAt *time.Time `db:"deleted_at" json:"deleted_at"`
+	Balance   int        `db:"balance" json:"balance"`
+	Hold      int        `db:"hold" json:"hold"`
+	CreatedAt time.Time  `db:"created_at" json:"created_at"`
 }
 
 type Device struct {

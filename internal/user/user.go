@@ -19,6 +19,9 @@ type repo interface {
 	login(ctx context.Context, email string) (uuid.UUID, string, error)
 	register(ctx context.Context, id uuid.UUID, name string, email string, password string) error
 	getEmailForID(ctx context.Context, uid uuid.UUID) (string, error)
+	getUser(ctx context.Context, uid uuid.UUID) (User, error)
+	patchUserName(ctx context.Context, uid uuid.UUID, name string) error
+	deletedUser(ctx context.Context, uid uuid.UUID) error
 
 	newToken(ctx context.Context, userID uuid.UUID, refreshToken []byte, device Device) error
 	findCurrentToken(ctx context.Context, refreshToken []byte) (Session, error)
@@ -151,7 +154,14 @@ func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, erro
 	if err != nil {
 		return Tokens{}, err
 	}
-	return createTokens(email, userSession.UserID)
+	accessToken, err := generateAccessToken(email, userSession.UserID)
+	if err != nil {
+		return Tokens{}, err
+	}
+	return Tokens{
+		AccessToken:  accessToken,
+		RefreshToken: refresh,
+	}, nil
 }
 
 func (s *Service) tokenResponds(ctx context.Context, refresh string) (Session, error) {
@@ -172,4 +182,16 @@ func (s *Service) findTokens(ctx context.Context, uid uuid.UUID, current bool) (
 		return s.repo.findAllCurrentTokens(ctx, uid)
 	}
 	return s.repo.findAllTokens(ctx, uid)
+}
+
+func (s *Service) getUser(ctx context.Context, uid uuid.UUID) (User, error) {
+	return s.repo.getUser(ctx, uid)
+}
+
+func (s *Service) patchUserName(ctx context.Context, uid uuid.UUID, name string) error {
+	return s.repo.patchUserName(ctx, uid, name)
+}
+
+func (s *Service) deletedUser(ctx context.Context, uid uuid.UUID) error {
+	return s.repo.deletedUser(ctx, uid)
 }

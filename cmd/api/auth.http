@@ -18,6 +18,10 @@ Accept: application/json
 > handler.js
 
 ###
+POST http://localhost:8080/api/auth/refresh
+
+> handler
+###
 POST localhost:8080/api/auth/logout
 Authorization:Bearer {{auth_token}}
 Accept: application/json
@@ -32,4 +36,17 @@ Accept: application/json
 
 {
     "current": true
+}
+
+###
+GET localhost:8080/api/user/me
+Authorization:Bearer {{auth_token}}
+
+###
+PATCH localhost:8080/api/user/name
+Authorization:Bearer {{auth_token}}
+Accept: application/json
+
+{
+    "name": "I AM GOD"
 }

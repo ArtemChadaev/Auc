@@ -41,8 +41,8 @@ func main() {
 	globalChain := alice.New(middleware.Logger)
 	userHandler := user.NewHandler(user.NewService(user.NewRepo(pool)))
 	authChain := alice.New(middleware.AuthAccessToken)
-	mux.Handle("/api/auth/", http.StripPrefix("/api/auth", userHandler.Routes(authChain)))
-
+	mux.Handle("/api/auth/", http.StripPrefix("/api/auth", userHandler.RoutesAuth(authChain)))
+	mux.Handle("/api/user/", http.StripPrefix("/api/user", authChain.Then(userHandler.RoutesUser())))
 	srv := &http.Server{
 		Addr:              ":8080",
 		Handler:           globalChain.Then(mux),
