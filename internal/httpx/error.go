@@ -2,6 +2,12 @@ package httpx
 
 import "net/http"
 
+// Строки ошибок
+var (
+	InvalidToken   = "invalid token"
+	InternalServer = "internal server error"
+)
+
 type ErrorType int
 
 const (

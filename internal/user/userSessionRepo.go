@@ -67,10 +67,22 @@ func (r *Repo) revokedToken(ctx context.Context, tokenID int64, uid uuid.UUID) e
 	return nil
 }
 
-func (r *Repo) updateToken(ctx context.Context, refreshToken []byte) error {
-	_, err := r.db.Exec(ctx, "UPDATE user_sessions SET expires_at = $1 WHERE refresh_token_hash = $2 AND expires_at > now() AND expires_at - INTERVAL '7 days' < now()", time.Now().UTC().Add(time.Duration(cfg.Cfg.ExpiredRefreshToken)*time.Hour*24), refreshToken)
+func (r *Repo) updateToken(ctx context.Context, refreshToken []byte) (Session, error) {
+	var session Session
+	row, err := r.db.Query(ctx,
+		`UPDATE user_sessions 
+		SET expires_at = $1 
+		WHERE refresh_token_hash = $2 
+		  AND expires_at > now() 
+		  AND expires_at - INTERVAL '7 days' < now()`,
+		time.Now().UTC().Add(time.Duration(cfg.Cfg.ExpiredRefreshToken)*time.Hour*24),
+		refreshToken)
 	if err != nil {
-		return fmt.Errorf("userSessionRepo.updateToken: %w", storage.ErrRepo(err))
+		return session, fmt.Errorf("userSessionRepo.updateToken: %w", storage.ErrRepo(err))
 	}
-	return nil
+	session, err = pgx.CollectExactlyOneRow(row, pgx.RowToStructByName[Session])
+	if err != nil {
+		return session, fmt.Errorf("userSessionRepo.updateToken: %w", storage.ErrRepo(err))
+	}
+	return session, nil
 }

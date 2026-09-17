@@ -9,7 +9,7 @@ import (
 func WriteJSON(w http.ResponseWriter, status int, data any) {
 	js, err := json.Marshal(data)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Error response", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

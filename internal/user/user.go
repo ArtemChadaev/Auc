@@ -6,12 +6,12 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 	"uuid"
 
+	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -28,7 +28,7 @@ type repo interface {
 	findAllTokens(ctx context.Context, userID uuid.UUID) ([]Session, error)
 	findAllCurrentTokens(ctx context.Context, userID uuid.UUID) ([]Session, error)
 	revokedToken(ctx context.Context, tokenID int64, uid uuid.UUID) error
-	updateToken(ctx context.Context, refreshToken []byte) error
+	updateToken(ctx context.Context, refreshToken []byte) (Session, error)
 }
 
 type Service struct {
@@ -51,7 +51,7 @@ func createPassword(password string) (string, error) {
 	salt := make([]byte, SaltLength)
 	_, err := rand.Read(salt)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf(`user.createPassword(%w): %s`, apperr.ErrWarn, err)
 	}
 	hash := argon2.IDKey([]byte(password), salt, Time, Memory, Parallelism, KeyLength)
 	b64Salt := base64.RawStdEncoding.EncodeToString(salt)
@@ -63,21 +63,21 @@ func createPassword(password string) (string, error) {
 func checkPassword(passHash, password string) error {
 	parts := strings.Split(passHash, "$")
 	if len(parts) != 6 {
-		return fmt.Errorf("invalid passwordHash")
+		return fmt.Errorf(`user.checkPassword(%w)"`, apperr.ErrError)
 	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
-		return err
+		return fmt.Errorf(`user.checkPassword(%w): %s`, apperr.ErrError, err)
 	}
 	pass, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
-		return err
+		return fmt.Errorf(`user.checkPassword(%w): %s`, apperr.ErrError, err)
 	}
 	passDB := argon2.IDKey([]byte(password), salt, Time, Memory, Parallelism, KeyLength)
 
 	if subtle.ConstantTimeCompare(passDB, pass) != 1 {
-		return errors.New("invalid password")
+		return fmt.Errorf("user.checkPassword: %w", apperr.ErrInvalidRequest)
 	}
 	return nil
 }
@@ -87,7 +87,7 @@ func (s *Service) register(ctx context.Context, uid *uuid.UUID, name string, ema
 
 	pass, err := createPassword(password)
 	if err != nil {
-		return tokens, err
+		return tokens, fmt.Errorf(`user.register: %w`, err)
 	}
 
 	if uid == nil {
@@ -96,17 +96,17 @@ func (s *Service) register(ctx context.Context, uid *uuid.UUID, name string, ema
 	}
 	err = s.repo.register(ctx, *uid, name, email, pass)
 	if err != nil {
-		return tokens, err
+		return tokens, fmt.Errorf("user.register: %w", err)
 	}
 
 	tokens, err = createTokens(email, *uid)
 	if err != nil {
-		return tokens, err
+		return tokens, fmt.Errorf("user.register: %w", err)
 	}
 
 	sha := sha256.Sum256([]byte(tokens.RefreshToken))
 	if err = s.repo.newToken(ctx, *uid, sha[:], device); err != nil {
-		return tokens, err
+		return tokens, fmt.Errorf("user.register: %w", err)
 	}
 	return tokens, nil
 }
@@ -116,7 +116,7 @@ func (s *Service) authPassword(ctx context.Context, email string, password strin
 
 	uid, passHash, err := s.repo.login(ctx, email)
 	if err != nil {
-		return tokens, err
+		return tokens, fmt.Errorf("user.authPassword: %w", err)
 	}
 	if err = checkPassword(passHash, password); err != nil {
 		return tokens, err
@@ -124,12 +124,12 @@ func (s *Service) authPassword(ctx context.Context, email string, password strin
 
 	tokens, err = createTokens(email, uid)
 	if err != nil {
-		return tokens, err
+		return tokens, fmt.Errorf("user.authPassword: %w", err)
 	}
 
 	sha := sha256.Sum256([]byte(tokens.RefreshToken))
 	if err = s.repo.newToken(ctx, uid, sha[:], device); err != nil {
-		return tokens, err
+		return tokens, fmt.Errorf("user.authPassword: %w", err)
 	}
 	return tokens, nil
 }
@@ -138,16 +138,12 @@ func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, erro
 	sha := sha256.Sum256([]byte(refresh))
 	userSession, err := s.repo.findCurrentToken(ctx, sha[:])
 	if err != nil {
-		return Tokens{}, err
-	}
-	if userSession.RevokedAt != nil {
-		return Tokens{}, errors.New("refresh token is revoked")
+		return Tokens{}, fmt.Errorf("user.authRefresh: %w", err)
 	}
 	// Токен закончится раньше чем через 7 дней
 	if userSession.ExpiresAt.Before(time.Now().UTC().Add(7 * 24 * time.Hour)) {
-		// Если произошла ошибка то пропускаем, если нет то еще раз его получаем, TODO: ПЕРЕПРОВЕРИТЬ ВЫГЛЯДИТ ОПАСНО
-		if err = s.repo.updateToken(ctx, sha[:]); err != nil {
-			return s.authRefresh(ctx, refresh)
+		if userSession, err = s.repo.updateToken(ctx, sha[:]); err != nil {
+			return Tokens{}, fmt.Errorf("user.authRefresh: %w", err)
 		}
 	}
 	email, err := s.repo.getEmailForID(ctx, userSession.UserID)
@@ -166,7 +162,11 @@ func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, erro
 
 func (s *Service) tokenResponds(ctx context.Context, refresh string) (Session, error) {
 	sha := sha256.Sum256([]byte(refresh))
-	return s.repo.findCurrentToken(ctx, sha[:])
+	userSession, err := s.repo.findCurrentToken(ctx, sha[:])
+	if err != nil {
+		return userSession, fmt.Errorf("user.tokenResponds: %w", err)
+	}
+	return userSession, nil
 }
 
 func (s *Service) logout(ctx context.Context, refreshId []int64, uid uuid.UUID) error {
@@ -174,24 +174,45 @@ func (s *Service) logout(ctx context.Context, refreshId []int64, uid uuid.UUID) 
 	for _, id := range refreshId {
 		err = s.repo.revokedToken(ctx, id, uid)
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("user.logout: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) findTokens(ctx context.Context, uid uuid.UUID, current bool) ([]Session, error) {
 	if current {
-		return s.repo.findAllCurrentTokens(ctx, uid)
+		sessions, err := s.repo.findAllCurrentTokens(ctx, uid)
+		if err != nil {
+			return nil, fmt.Errorf("user.findTokens: %w", err)
+		}
+		return sessions, nil
 	}
-	return s.repo.findAllTokens(ctx, uid)
+	sessions, err := s.repo.findAllTokens(ctx, uid)
+	if err != nil {
+		return nil, fmt.Errorf("user.findTokens: %w", err)
+	}
+	return sessions, nil
 }
 
 func (s *Service) getUser(ctx context.Context, uid uuid.UUID) (User, error) {
-	return s.repo.getUser(ctx, uid)
+	user, err := s.repo.getUser(ctx, uid)
+	if err != nil {
+		return User{}, fmt.Errorf("user.getUser: %w", err)
+	}
+	return user, nil
 }
 
 func (s *Service) patchUserName(ctx context.Context, uid uuid.UUID, name string) error {
-	return s.repo.patchUserName(ctx, uid, name)
+	if err := s.repo.patchUserName(ctx, uid, name); err != nil {
+		return fmt.Errorf("user.patchUserName: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) deletedUser(ctx context.Context, uid uuid.UUID) error {
-	return s.repo.deletedUser(ctx, uid)
+	if err := s.repo.deletedUser(ctx, uid); err != nil {
+		return fmt.Errorf("user.deletedUser: %w", err)
+	}
+	return nil
 }
