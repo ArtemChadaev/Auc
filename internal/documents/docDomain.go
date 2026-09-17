@@ -1,4 +1,5 @@
-//package documents
+package documents
+
 //
 //import (
 //	"errors"
