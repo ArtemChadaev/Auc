@@ -10,10 +10,13 @@ import (
 
 func Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-			context.WithValue(r.Context(), cfg.IP, ip)
+			ctx = context.WithValue(ctx, cfg.IP, ip)
 		}
-		context.WithValue(r.Context(), cfg.Path, r.Method+" "+r.URL.Path)
+		ctx = context.WithValue(ctx, cfg.Path, r.Method+" "+r.URL.Path)
+
+		r = r.WithContext(ctx)
 
 		next.ServeHTTP(w, r)
 	})

@@ -45,20 +45,18 @@ func Init() {
 		AddSource: true,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == string(cfg.Email) {
-				parts := strings.Split(a.Key, "@")
+				parts := strings.Split(a.Value.String(), "@")
 				if len(parts) != 2 {
-					a.Key = "***"
-				} else {
-					runes := []rune(parts[0])
-					a.Key = fmt.Sprintf("%c***%c@%s", runes[0], runes[len(runes)-1], parts[1])
+					return slog.String(a.Key, "***")
 				}
+				runes := []rune(parts[0])
+				return slog.String(a.Key, fmt.Sprintf("%c***%c@%s", runes[0], runes[len(runes)-1], parts[1]))
 			}
 			if a.Key == string(cfg.IP) {
-				if ip := net.ParseIP(a.Key).To4(); ip != nil {
-					a.Key = ip.Mask(net.CIDRMask(24, 32)).String() + "/24"
-				} else {
-					a.Key = "0.0.0.0"
+				if ip := net.ParseIP(a.Value.String()).To4(); ip != nil {
+					return slog.String(a.Key, ip.Mask(net.CIDRMask(24, 32)).String()+"/24")
 				}
+				return slog.String(a.Key, "0.0.0.0")
 			}
 			return a
 		}, // Скрываем ip и email чтоб не дое..ставали
