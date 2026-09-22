@@ -63,21 +63,21 @@ func createPassword(password string) (string, error) {
 func checkPassword(passHash, password string) error {
 	parts := strings.Split(passHash, "$")
 	if len(parts) != 6 {
-		return fmt.Errorf(`user.checkPassword(%w)"`, apperr.ErrError)
+		return fmt.Errorf(`user.checkPassword(%w)"`, apperr.ErrWarn)
 	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
-		return fmt.Errorf(`user.checkPassword(%w): %s`, apperr.ErrError, err)
+		return fmt.Errorf(`user.checkPassword(%w): %s`, apperr.ErrWarn, err)
 	}
 	pass, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
-		return fmt.Errorf(`user.checkPassword(%w): %s`, apperr.ErrError, err)
+		return fmt.Errorf(`user.checkPassword(%w): %s`, apperr.ErrWarn, err)
 	}
 	passDB := argon2.IDKey([]byte(password), salt, Time, Memory, Parallelism, KeyLength)
 
 	if subtle.ConstantTimeCompare(passDB, pass) != 1 {
-		return fmt.Errorf("user.checkPassword: %w", apperr.ErrInvalidRequest)
+		return fmt.Errorf("user.checkPassword(%w)", apperr.ErrDebug)
 	}
 	return nil
 }
@@ -119,7 +119,7 @@ func (s *Service) authPassword(ctx context.Context, email string, password strin
 		return tokens, fmt.Errorf("user.authPassword: %w", err)
 	}
 	if err = checkPassword(passHash, password); err != nil {
-		return tokens, err
+		return tokens, fmt.Errorf("user.authPassword(%w): %w: %s", apperr.ErrDebug, apperr.ErrUnauthorized, err)
 	}
 
 	tokens, err = createTokens(email, uid)
@@ -148,11 +148,11 @@ func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, erro
 	}
 	email, err := s.repo.getEmailForID(ctx, userSession.UserID)
 	if err != nil {
-		return Tokens{}, err
+		return Tokens{}, fmt.Errorf("user.authRefresh: %w", err)
 	}
 	accessToken, err := generateAccessToken(email, userSession.UserID)
 	if err != nil {
-		return Tokens{}, err
+		return Tokens{}, fmt.Errorf("user.authRefresh: %w", err)
 	}
 	return Tokens{
 		AccessToken:  accessToken,
@@ -172,7 +172,9 @@ func (s *Service) tokenResponds(ctx context.Context, refresh string) (Session, e
 func (s *Service) logout(ctx context.Context, refreshId []int64, uid uuid.UUID) error {
 	var err error
 	for _, id := range refreshId {
-		err = s.repo.revokedToken(ctx, id, uid)
+		if err = s.repo.revokedToken(ctx, id, uid); err != nil {
+			break
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("user.logout: %w", err)

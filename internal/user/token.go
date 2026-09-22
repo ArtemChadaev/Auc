@@ -33,13 +33,13 @@ func generateAccessToken(email string, uuid uuid.UUID) (string, error) {
 
 	accessToken, err := token.SignedString([]byte(cfg.Cfg.JwtSecret))
 	if err != nil {
-		return "", fmt.Errorf("generate access token(%w): %s", apperr.ErrWarn, err)
+		return "", fmt.Errorf("token.generateAccessToken(%w): %s", apperr.ErrWarn, err)
 	}
 	return accessToken, nil
 }
 
 func keyFunc() jwt.Keyfunc {
-	return func(_ *jwt.Token) (interface{}, error) { return []byte(cfg.Cfg.JwtSecret), nil }
+	return func(_ *jwt.Token) (any, error) { return []byte(cfg.Cfg.JwtSecret), nil }
 }
 
 // VerifyAccessToken uuid, error

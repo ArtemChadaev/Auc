@@ -2,13 +2,16 @@ package user
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
-	"strings"
 	"uuid"
 
+	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
 	"github.com/ArtemChadaev/Auction/internal/httpx"
+	"github.com/ArtemChadaev/Auction/internal/storage"
 	"github.com/justinas/alice"
 )
 
@@ -35,40 +38,37 @@ func NewHandler(service service) *Handler {
 	}
 }
 
-type userReq struct {
-	Email string `json:"email"`
-	Pass  string `json:"password"`
-}
-
 func getDevice(r *http.Request) Device {
 
 	return Device{}
 }
 
-func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
-	var req userReq
+type userReq struct {
+	Email string `json:"email"`
+	Pass  string `json:"password"`
+}
 
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		if strings.HasPrefix(err.Error(), "json: unknown field") {
-			http.Error(w, "json don't have this field", http.StatusBadRequest)
-		} else {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-		}
+func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
+	req, err := httpx.DecodeJSON[userReq](r)
+	if err != nil {
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.login: %w", err))
 		return
 	}
-	//TODO: На время заглушка потом переделать
 
 	tokens, err := h.service.authPassword(r.Context(), req.Email, req.Pass, getDevice(r))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, apperr.ErrUnauthorized) {
+			slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
+			http.Error(w, httpx.InvalidAuth, http.StatusUnauthorized)
+		} else {
+			httpx.WriteError(w, r, fmt.Errorf("userHandler.login: %w", err))
+		}
 		return
 	}
 
 	session, err := h.service.tokenResponds(r.Context(), tokens.RefreshToken)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.login: %w", err))
 		return
 	}
 	responds := tokenResponds{
@@ -98,27 +98,25 @@ type registerReq struct {
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
-	var req registerReq
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		if strings.HasPrefix(err.Error(), "json: unknown field") {
-			http.Error(w, "json don't have this field", http.StatusBadRequest)
-		} else {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-		}
+	req, err := httpx.DecodeJSON[registerReq](r)
+	if err != nil {
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
 		return
 	}
 
 	tokens, err := h.service.register(r.Context(), req.ID, req.Name, req.Email, req.Pass, getDevice(r))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		if errors.Is(err, storage.ErrUniqueViolation) {
+			slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
+			http.Error(w, httpx.FieldIsTaken, http.StatusUnprocessableEntity)
+		} else {
+			httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
+		}
 		return
 	}
 	session, err := h.service.tokenResponds(r.Context(), tokens.RefreshToken)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
 		return
 	}
 	responds := tokenResponds{
@@ -145,27 +143,20 @@ type refreshIdReq struct {
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
-	//TODO: переделать в отдельный метод чтобы не повторятся каждый раз
-	var req refreshIdReq
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		if strings.HasPrefix(err.Error(), "json: unknown field") {
-			http.Error(w, "json don't have this field", http.StatusBadRequest)
-		} else {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-		}
+	req, err := httpx.DecodeJSON[refreshIdReq](r)
+	if err != nil {
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.logout: %w", err))
 		return
 	}
 
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
+		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
-	if err := h.service.logout(r.Context(), req.ID, uid); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err = h.service.logout(r.Context(), req.ID, uid); err != nil {
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.logout: %w", err))
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, nil)
@@ -176,22 +167,16 @@ type findRefreshReq struct {
 }
 
 func (h *Handler) findRefresh(w http.ResponseWriter, r *http.Request) {
-	var req findRefreshReq
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		if strings.HasPrefix(err.Error(), "json: unknown field") {
-			http.Error(w, "json don't have this field", http.StatusBadRequest)
-		} else {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-		}
+	req, err := httpx.DecodeJSON[findRefreshReq](r)
+	if err != nil {
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.findRefresh: %w", err))
 		return
 	}
 
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
+		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
 
@@ -203,7 +188,13 @@ func (h *Handler) findRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	sessions, err := h.service.findTokens(r.Context(), uid, current)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if errors.Is(err, storage.ErrNotFound) {
+			slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
+			http.Error(w, httpx.NotFound, http.StatusNotFound)
+		} else {
+			httpx.WriteError(w, r, fmt.Errorf("userHandler.findRefresh: %w", err))
+		}
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, sessions)
 }
@@ -211,17 +202,23 @@ func (h *Handler) findRefresh(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) loginToken(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("refresh_token")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
+		http.Error(w, httpx.InvalidAuth, http.StatusUnauthorized)
 		return
 	}
 	tokens, err := h.service.authRefresh(r.Context(), cookie.Value)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		if errors.Is(err, storage.ErrNotFound) {
+			slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
+			http.Error(w, httpx.InvalidAuth, http.StatusUnauthorized)
+		} else {
+			httpx.WriteError(w, r, fmt.Errorf("userHandler.loginToken: %w", err))
+		}
 		return
 	}
 	session, err := h.service.tokenResponds(r.Context(), tokens.RefreshToken)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
 		return
 	}
 	responds := tokenResponds{
@@ -259,12 +256,13 @@ func (h *Handler) RoutesAuth(chain alice.Chain) http.Handler {
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
+		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
 	user, err := h.service.getUser(r.Context(), uid)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, user)
@@ -275,26 +273,21 @@ type newNameReq struct {
 }
 
 func (h *Handler) patchUserName(w http.ResponseWriter, r *http.Request) {
-	var req newNameReq
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		if strings.HasPrefix(err.Error(), "json: unknown field") {
-			http.Error(w, "json don't have this field", http.StatusBadRequest)
-		} else {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-		}
+	req, err := httpx.DecodeJSON[newNameReq](r)
+	if err != nil {
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
 		return
 	}
 
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
 	}
 	err = h.service.patchUserName(r.Context(), uid, req.Name)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, nil)
@@ -303,11 +296,13 @@ func (h *Handler) patchUserName(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) deletedUser(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
 	}
 	err = h.service.deletedUser(r.Context(), uid)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, nil)

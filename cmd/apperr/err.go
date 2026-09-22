@@ -7,6 +7,9 @@ var (
 	ErrError = errors.New("error")
 	// ErrWarn Для ошибок требующих логирования Warn влияют на часть программы
 	ErrWarn = errors.New("warn")
+	// ErrDebug Для ошибок от пользователя требующих логирования только при тесте
+	ErrDebug = errors.New("debug")
 
-	ErrInvalidRequest = errors.New("invalid request")
+	ErrUnauthorized    = errors.New("unauthorized")
+	ErrNotFoundContext = errors.New("not found in context")
 )
