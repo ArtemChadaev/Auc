@@ -24,7 +24,7 @@ type service interface {
 	findTokens(ctx context.Context, uid uuid.UUID, current bool) ([]Session, error)
 	getUser(ctx context.Context, uid uuid.UUID) (User, error)
 	patchUserName(ctx context.Context, uid uuid.UUID, name string) error
-	deletedUser(ctx context.Context, uid uuid.UUID) error
+	deleteUser(ctx context.Context, uid uuid.UUID) error
 }
 
 // TODO: ERROR: Всё сделать и перепроверить в trim!!!!! иначе ошибка будет
@@ -293,14 +293,14 @@ func (h *Handler) patchUserName(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, nil)
 }
 
-func (h *Handler) deletedUser(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
 		slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
-	err = h.service.deletedUser(r.Context(), uid)
+	err = h.service.deleteUser(r.Context(), uid)
 	if err != nil {
 		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
 		return

@@ -21,7 +21,7 @@ type repo interface {
 	getEmailForID(ctx context.Context, uid uuid.UUID) (string, error)
 	getUser(ctx context.Context, uid uuid.UUID) (User, error)
 	patchUserName(ctx context.Context, uid uuid.UUID, name string) error
-	deletedUser(ctx context.Context, uid uuid.UUID) error
+	deleteUser(ctx context.Context, uid uuid.UUID) error
 
 	newToken(ctx context.Context, userID uuid.UUID, refreshToken []byte, device Device) error
 	findCurrentToken(ctx context.Context, refreshToken []byte) (Session, error)
@@ -212,8 +212,8 @@ func (s *Service) patchUserName(ctx context.Context, uid uuid.UUID, name string)
 	return nil
 }
 
-func (s *Service) deletedUser(ctx context.Context, uid uuid.UUID) error {
-	if err := s.repo.deletedUser(ctx, uid); err != nil {
+func (s *Service) deleteUser(ctx context.Context, uid uuid.UUID) error {
+	if err := s.repo.deleteUser(ctx, uid); err != nil {
 		return fmt.Errorf("user.deletedUser: %w", err)
 	}
 	return nil

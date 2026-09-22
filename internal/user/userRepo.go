@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"uuid"
 
+	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/internal/storage"
 )
 
@@ -16,7 +17,6 @@ func NewRepo(db storage.DBTX) *Repo {
 	return &Repo{db: db}
 }
 
-// return pass or err
 func (r *Repo) login(ctx context.Context, email string) (uuid.UUID, string, error) {
 	var id uuid.UUID
 	var password string
@@ -28,7 +28,7 @@ func (r *Repo) login(ctx context.Context, email string) (uuid.UUID, string, erro
 	return id, password, nil
 }
 
-func (r *Repo) register(ctx context.Context, id uuid.UUID, name string, email string, password string) error {
+func (r *Repo) register(ctx context.Context, id uuid.UUID, name, email, password string) error {
 	_, err := r.db.Exec(ctx, "insert into users(id, name, email, password_hash) values($1, $2, lower($3), $4)", id, name, email, password)
 	if err != nil {
 		return fmt.Errorf("userRepo.register: %w", storage.ErrRepo(err))
@@ -36,7 +36,7 @@ func (r *Repo) register(ctx context.Context, id uuid.UUID, name string, email st
 	return nil
 }
 
-func (r *Repo) getEmailForID(ctx context.Context, uid uuid.UUID) (string, error) {
+func (r *Repo) getEmailByID(ctx context.Context, uid uuid.UUID) (string, error) {
 	var email string
 	row := r.db.QueryRow(ctx, "select email from users where id = $1", uid)
 	err := row.Scan(&email)
@@ -57,17 +57,23 @@ func (r *Repo) getUser(ctx context.Context, uid uuid.UUID) (User, error) {
 }
 
 func (r *Repo) patchUserName(ctx context.Context, uid uuid.UUID, name string) error {
-	_, err := r.db.Exec(ctx, "update users set name = $1 where id = $2", name, uid)
+	res, err := r.db.Exec(ctx, "update users set name = $1 where id = $2 and deleted_at is null", name, uid)
 	if err != nil {
 		return fmt.Errorf("userRepo.patchUserName: %w", storage.ErrRepo(err))
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("userRepo.patchUserName(%w): %w", apperr.ErrDebug, storage.ErrNotFound)
 	}
 	return nil
 }
 
-func (r *Repo) deletedUser(ctx context.Context, uid uuid.UUID) error {
-	_, err := r.db.Exec(ctx, "update users set deleted_at = now() where id = $1", uid)
+func (r *Repo) deleteUser(ctx context.Context, uid uuid.UUID) error {
+	res, err := r.db.Exec(ctx, "update users set deleted_at = now() where id = $1 and deleted_at is null", uid)
 	if err != nil {
-		return fmt.Errorf("userRepo.deletedUser: %w", storage.ErrRepo(err))
+		return fmt.Errorf("userRepo.deleteUser: %w", storage.ErrRepo(err))
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("userRepo.deleteUser(%w): %w", apperr.ErrDebug, storage.ErrNotFound)
 	}
 	return nil
 }

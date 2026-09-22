@@ -6,6 +6,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
 	"github.com/ArtemChadaev/Auction/internal/storage"
 	"github.com/jackc/pgx/v5"
@@ -60,9 +61,12 @@ func (r *Repo) findAllCurrentTokens(ctx context.Context, userID uuid.UUID) ([]Se
 	return sessions, nil
 }
 func (r *Repo) revokedToken(ctx context.Context, tokenID int64, uid uuid.UUID) error {
-	_, err := r.db.Exec(ctx, "UPDATE user_sessions SET revoked_at = now() WHERE id = $1 AND user_id = $2", tokenID, uid)
+	res, err := r.db.Exec(ctx, "UPDATE user_sessions SET revoked_at = now() WHERE id = $1 AND user_id = $2", tokenID, uid)
 	if err != nil {
 		return fmt.Errorf("userSessionRepo.revokedToken(uid=%s): %w", uid, storage.ErrRepo(err))
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("userSessionRepo.revokedToken(%w): %w", apperr.ErrDebug, storage.ErrNotFound)
 	}
 	return nil
 }
