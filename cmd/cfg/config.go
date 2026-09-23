@@ -6,10 +6,18 @@ import (
 
 type config struct {
 	Deploy              bool   `env:"DEPLOY,required,notEmpty"`
+	HostDB              string `env:"HOST_DB" envDefault:"localhost"`
 	JwtSecret           string `env:"JWT_SECRET,required,notEmpty"`
 	ExpiredRefreshToken int64  `env:"EXPIRED_REFRESH_TOKEN" envDefault:"14"` // в днях
 	ExpiredAccessToken  int64  `env:"EXPIRED_ACCESS_TOKEN" envDefault:"15"`  // в минутах
 	Domain              string `env:"DOMAIN" default:"test.com"`
+
+	// S3
+	Endpoint  string `env:"ENDPOINT,required,notEmpty"`
+	Region    string `env:"REGION,required,notEmpty"`
+	AccessKey string `env:"ACCESS_KEY,required,notEmpty"`
+	SecretKey string `env:"SECRET_KEY,required,notEmpty"`
+	Bucket    string `env:"BUCKET,required,notEmpty"`
 }
 
 var Cfg *config

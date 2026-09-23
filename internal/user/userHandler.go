@@ -240,15 +240,15 @@ func (h *Handler) loginToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // RoutesAuth /api/auth
-func (h *Handler) RoutesAuth(chain alice.Chain) http.Handler {
+func (h *Handler) RoutesAuth(authChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /login", h.login)
 	mux.HandleFunc("POST /register", h.register)
 	mux.HandleFunc("POST /refresh", h.loginToken)
 
-	mux.Handle("POST /logout", chain.ThenFunc(h.logout))
-	mux.Handle("POST /session", chain.ThenFunc(h.findRefresh))
+	mux.Handle("POST /logout", authChain.ThenFunc(h.logout))
+	mux.Handle("POST /session", authChain.ThenFunc(h.findRefresh))
 
 	return mux
 }
@@ -313,7 +313,7 @@ func (h *Handler) RoutesUser() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /me", h.getUser)
 	mux.HandleFunc("PATCH /name", h.patchUserName)
-	mux.HandleFunc("DELETE /me", h.deletedUser)
+	mux.HandleFunc("DELETE /me", h.deleteUser)
 
 	return mux
 }

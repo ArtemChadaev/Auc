@@ -2,8 +2,10 @@ package cfg
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"uuid"
+
+	"github.com/ArtemChadaev/Auction/cmd/apperr"
 )
 
 type contextKey string
@@ -19,5 +21,5 @@ func GetUID(ctx context.Context) (uuid.UUID, error) {
 	if uid, ok := ctx.Value(UID).(uuid.UUID); ok {
 		return uid, nil
 	}
-	return uuid.Nil(), errors.New("uid not found in context")
+	return uuid.Nil(), fmt.Errorf("context.GetUID(%w): %w", apperr.ErrDebug, apperr.ErrNotFoundContext)
 }

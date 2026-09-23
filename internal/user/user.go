@@ -18,7 +18,7 @@ import (
 type repo interface {
 	login(ctx context.Context, email string) (uuid.UUID, string, error)
 	register(ctx context.Context, id uuid.UUID, name string, email string, password string) error
-	getEmailForID(ctx context.Context, uid uuid.UUID) (string, error)
+	getEmailByID(ctx context.Context, uid uuid.UUID) (string, error)
 	getUser(ctx context.Context, uid uuid.UUID) (User, error)
 	patchUserName(ctx context.Context, uid uuid.UUID, name string) error
 	deleteUser(ctx context.Context, uid uuid.UUID) error
@@ -51,7 +51,7 @@ func createPassword(password string) (string, error) {
 	salt := make([]byte, SaltLength)
 	_, err := rand.Read(salt)
 	if err != nil {
-		return "", fmt.Errorf(`user.createPassword(%w): %s`, apperr.ErrWarn, err)
+		return "", fmt.Errorf(`user.createPassword(%w): %v`, apperr.ErrWarn, err)
 	}
 	hash := argon2.IDKey([]byte(password), salt, Time, Memory, Parallelism, KeyLength)
 	b64Salt := base64.RawStdEncoding.EncodeToString(salt)
@@ -68,11 +68,11 @@ func checkPassword(passHash, password string) error {
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
-		return fmt.Errorf(`user.checkPassword(%w): %s`, apperr.ErrWarn, err)
+		return fmt.Errorf(`user.checkPassword(%w): %v`, apperr.ErrWarn, err)
 	}
 	pass, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
-		return fmt.Errorf(`user.checkPassword(%w): %s`, apperr.ErrWarn, err)
+		return fmt.Errorf(`user.checkPassword(%w): %v`, apperr.ErrWarn, err)
 	}
 	passDB := argon2.IDKey([]byte(password), salt, Time, Memory, Parallelism, KeyLength)
 
@@ -119,7 +119,7 @@ func (s *Service) authPassword(ctx context.Context, email string, password strin
 		return tokens, fmt.Errorf("user.authPassword: %w", err)
 	}
 	if err = checkPassword(passHash, password); err != nil {
-		return tokens, fmt.Errorf("user.authPassword(%w): %w: %s", apperr.ErrDebug, apperr.ErrUnauthorized, err)
+		return tokens, fmt.Errorf("user.authPassword(%w): %w: %v", apperr.ErrDebug, apperr.ErrUnauthorized, err)
 	}
 
 	tokens, err = createTokens(email, uid)
@@ -146,7 +146,7 @@ func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, erro
 			return Tokens{}, fmt.Errorf("user.authRefresh: %w", err)
 		}
 	}
-	email, err := s.repo.getEmailForID(ctx, userSession.UserID)
+	email, err := s.repo.getEmailByID(ctx, userSession.UserID)
 	if err != nil {
 		return Tokens{}, fmt.Errorf("user.authRefresh: %w", err)
 	}

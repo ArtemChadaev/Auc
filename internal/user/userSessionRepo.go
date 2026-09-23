@@ -16,7 +16,7 @@ import (
 func (r *Repo) newToken(ctx context.Context, userID uuid.UUID, refreshToken []byte, device Device) error {
 	_, err := r.db.Exec(ctx, "INSERT INTO user_sessions(user_id, refresh_token_hash, expires_at, device) values ($1, $2, $3, $4)", userID, refreshToken, time.Now().UTC().Add(time.Duration(cfg.Cfg.ExpiredRefreshToken)*time.Hour*24), device)
 	if err != nil {
-		return fmt.Errorf("userSessionRepo.newToken(uid=%s): %w", userID, storage.ErrRepo(err))
+		return fmt.Errorf("userSessionRepo.newToken(uid=%v): %w", userID, storage.ErrRepo(err))
 	}
 	return nil
 }
@@ -38,12 +38,12 @@ func (r *Repo) findCurrentToken(ctx context.Context, refreshToken []byte) (Sessi
 func (r *Repo) findAllTokens(ctx context.Context, userID uuid.UUID) ([]Session, error) {
 	rows, err := r.db.Query(ctx, "SELECT * FROM user_sessions WHERE user_id = $1", userID)
 	if err != nil {
-		return nil, fmt.Errorf("userSessionRepo.findAllTokens(uid=%s): %w", userID, storage.ErrRepo(err))
+		return nil, fmt.Errorf("userSessionRepo.findAllTokens(uid=%v): %w", userID, storage.ErrRepo(err))
 	}
 	var sessions []Session
 	sessions, err = pgx.CollectRows(rows, pgx.RowToStructByName[Session])
 	if err != nil {
-		return nil, fmt.Errorf("userSessionRepo.findAllTokens(uid=%s): %w", userID, storage.ErrRepo(err))
+		return nil, fmt.Errorf("userSessionRepo.findAllTokens(uid=%v): %w", userID, storage.ErrRepo(err))
 	}
 	return sessions, nil
 }
@@ -51,19 +51,19 @@ func (r *Repo) findAllTokens(ctx context.Context, userID uuid.UUID) ([]Session, 
 func (r *Repo) findAllCurrentTokens(ctx context.Context, userID uuid.UUID) ([]Session, error) {
 	rows, err := r.db.Query(ctx, "SELECT * FROM user_sessions WHERE user_id = $1  AND revoked_at IS NULL ", userID)
 	if err != nil {
-		return nil, fmt.Errorf("userSessionRepo.findAllCurrentTokens(uid=%s): %w", userID, storage.ErrRepo(err))
+		return nil, fmt.Errorf("userSessionRepo.findAllCurrentTokens(uid=%v): %w", userID, storage.ErrRepo(err))
 	}
 	var sessions []Session
 	sessions, err = pgx.CollectRows(rows, pgx.RowToStructByName[Session])
 	if err != nil {
-		return nil, fmt.Errorf("userSessionRepo.findAllCurrentTokens(uid=%s): %w", userID, storage.ErrRepo(err))
+		return nil, fmt.Errorf("userSessionRepo.findAllCurrentTokens(uid=%v): %w", userID, storage.ErrRepo(err))
 	}
 	return sessions, nil
 }
 func (r *Repo) revokedToken(ctx context.Context, tokenID int64, uid uuid.UUID) error {
 	res, err := r.db.Exec(ctx, "UPDATE user_sessions SET revoked_at = now() WHERE id = $1 AND user_id = $2", tokenID, uid)
 	if err != nil {
-		return fmt.Errorf("userSessionRepo.revokedToken(uid=%s): %w", uid, storage.ErrRepo(err))
+		return fmt.Errorf("userSessionRepo.revokedToken(uid=%v): %w", uid, storage.ErrRepo(err))
 	}
 	if res.RowsAffected() == 0 {
 		return fmt.Errorf("userSessionRepo.revokedToken(%w): %w", apperr.ErrDebug, storage.ErrNotFound)

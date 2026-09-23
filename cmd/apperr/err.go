@@ -12,4 +12,5 @@ var (
 
 	ErrUnauthorized    = errors.New("unauthorized")
 	ErrNotFoundContext = errors.New("not found in context")
+	ErrForbidden       = errors.New("forbidden")
 )

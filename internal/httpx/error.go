@@ -10,12 +10,14 @@ var (
 
 // Строки ошибок
 var (
-	NotFound       = "not found"
-	FieldIsTaken   = "field is taken"
-	InvalidReqBody = "invalid request body"
-	InvalidAuth    = "invalid authorization"
-	InvalidToken   = "invalid token"
-	InternalServer = "internal server error"
+	NotFound          = "not found"
+	FieldIsTaken      = "field is taken"
+	InvalidReqBody    = "invalid request body"
+	InvalidAuth       = "invalid authorization"
+	InvalidToken      = "invalid token"
+	InternalServer    = "internal server error"
+	ReqEntityTooLarge = "request entity too large"
+	BadFile           = "bad file"
 )
 
 //type ErrorType int

@@ -3,7 +3,7 @@ Accept: application/json
 
 {
     "name": "Art",
-    "email": "aaSSassS@saaw.awsd",
+    "email": "  AaaSSassS@saaw.awsd",
     "password": "123123123"
 }
 ###
@@ -11,16 +11,16 @@ POST http://localhost:8080/api/auth/login
 Accept: application/json
 
 {
-    "email": "aaSSassS@saaw.awsd",
-    "password": "123123123"
+    "email": "   aaSSassS@saaw.awsd",
+    "password": "123123123   "
 }
 
 > handler.js
 
 ###
-POST http://localhost:8080/api/auth/refresh
+POST http://localhost:80/api/auth/refresh
 
-> handler
+> handler.js
 ###
 POST localhost:8080/api/auth/logout
 Authorization:Bearer {{auth_token}}
@@ -48,5 +48,5 @@ Authorization:Bearer {{auth_token}}
 Accept: application/json
 
 {
-    "name": "I AM GOD"
+    "name": "I AM GOD     "
 }

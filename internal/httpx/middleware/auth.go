@@ -17,20 +17,20 @@ func AuthAccessToken(next http.Handler) http.Handler {
 		auth := r.Header.Get("Authorization")
 		if auth == "" {
 			http.Error(w, httpx.InvalidToken, http.StatusUnauthorized)
-			slog.InfoContext(r.Context(), httpx.InvalidToken)
+			slog.DebugContext(r.Context(), httpx.InvalidToken)
 			return
 		}
 		parts := strings.SplitN(auth, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
 			http.Error(w, httpx.InvalidToken, http.StatusUnauthorized)
-			slog.InfoContext(r.Context(), httpx.InvalidToken)
+			slog.DebugContext(r.Context(), httpx.InvalidToken)
 			return
 		}
 		uid, err := user.VerifyAccessToken(parts[1])
 		if err != nil {
 			if errors.Is(err, user.ErrInvalidToken) {
 				http.Error(w, httpx.InvalidToken, http.StatusUnauthorized)
-				slog.InfoContext(r.Context(), httpx.InvalidToken, slog.Any("error", err))
+				slog.DebugContext(r.Context(), httpx.InvalidToken, slog.Any("error", err))
 			} else {
 				http.Error(w, httpx.InternalServer, http.StatusInternalServerError)
 				slog.WarnContext(r.Context(), httpx.InternalServer, slog.Any("error", err))

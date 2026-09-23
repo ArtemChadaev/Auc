@@ -1,6 +1,5 @@
 begin;
--- balance сделать проверку (мб в бд) что не может быть меньше 0, пользователь может распоряжатся balanca - hold
--- Если ставит на ставку где уже есть прошлая, то balance - hold + hold_bid
+
 create table  users (
     id uuid primary key default uuidv7(),
     name text not null,
@@ -13,10 +12,8 @@ create table  users (
     constraint users_balance_greater_hold check (balance >= hold)
 );
 
--- TODO: переделать на uuid а так же добавить индекс для uuid + email в user_sessions (при проверке refresh и создания access token надо)
-
 create unique index users_email_lower_key on users (lower(email)) where deleted_at is null;
--- refresh_token надо в хэш
+
 create table user_sessions (
     id bigint generated always as identity primary key,
     user_id uuid not null references users(id),
@@ -29,13 +26,16 @@ create table user_sessions (
 
 create index user_sessions_allow on user_sessions (user_id) WHERE revoked_at is null;
 
--- так в виде item сделать файл, как набор (пак) фотографий (рисунков или еще чегото) или 3d модели, м.б. все сжатое в архиф
+-- key - ключ от s3 хранилища
 create table items (
     id bigint generated always as identity primary key,
     creator_id uuid not null references users(id),
     owner_id uuid not null references users(id),
--- Я просто хз как хранить картинки и 3d мб объекты, наверное ссылка на чтото
---     Статус на проверки bool добавить без этого нельзя выставить и никто кроме владельца не видит. м.б. реализовать с помщью ИИ еще
+    key text not null unique,
+    type text not null constraint type_is check (type in ('image', '3d', 'audio', 'video', 'document', 'archive')),
+    mime_type text not null,
+    file_size_bytes bigint not null,
+    metadata jsonb default '{}'::jsonb,
     created_at timestamptz not null default now()
 );
 
@@ -45,13 +45,14 @@ create table lots (
     id bigint generated always as identity primary key,
     seller_id uuid not null references users(id),
     item_id bigint not null references items(id),
-    status text not null default 'draft' constraint status_is check (status in ('draft', 'active', 'finished', 'cancelled')),
+    -- pending, пока не проверится нельзя выкладывать. reject - отклонено, approved - утверждено проверкой. cancelled - пользователь отменил аукцион
+    status text not null default 'draft' constraint status_is check (status in ('draft', 'pending_review', 'approved', 'active', 'rejected', 'finished', 'cancelled')),
     winner_id uuid references users(id) default null,
     start_amount int not null check (start_amount > 0),
     min_step int not null check (min_step > 0),
     finish_amount int default null,
     title text not null,
-    description jsonb,
+    description jsonb default '{}'::jsonb,
     created_at timestamptz not null default now(),
     started_at timestamptz default null,
     ends_at timestamptz default null,
