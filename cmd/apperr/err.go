@@ -13,4 +13,9 @@ var (
 	ErrUnauthorized    = errors.New("unauthorized")
 	ErrNotFoundContext = errors.New("not found in context")
 	ErrForbidden       = errors.New("forbidden")
+
+	// ErrTimeout для контекста
+	ErrTimeout = errors.New("timeout")
+
+	ErrEntityTooLarge = errors.New("entity too large")
 )

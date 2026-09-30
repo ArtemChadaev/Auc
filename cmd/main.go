@@ -57,7 +57,6 @@ func main() {
 	globalChain := alice.New(middleware.Logger)
 	authChain := alice.New(middleware.AuthAccessToken)
 	standardChain := alice.New(middleware.MaxBodySize(1 << 20))
-	//bigChain := alice.New(middleware.MaxBodySize(50 << 20))
 
 	userHandler := user.NewHandler(user.NewService(user.NewRepo(pool)))
 	mux.Handle("/api/auth/", http.StripPrefix("/api/auth", standardChain.Then(userHandler.RoutesAuth(authChain))))
@@ -65,6 +64,7 @@ func main() {
 
 	itemHandler := item.NewHandler(item.NewService(pool, s3, item.NewRepo(pool)))
 	mux.Handle("/api/item/", http.StripPrefix("/api/item", standardChain.Then(itemHandler.Router(authChain))))
+	mux.Handle("/api/upload/", http.StripPrefix("/api/upload", alice.New(middleware.MaxBodySize(50<<20)).Then(itemHandler.RouterUpload())))
 
 	// М.б добавть сначала globalChain а потом все очень странные роутеры (по типу upload, -> отдельно)
 	srv := &http.Server{

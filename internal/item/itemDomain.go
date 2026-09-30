@@ -2,30 +2,58 @@ package item
 
 import (
 	"encoding/json"
+	"net/textproto"
 	"time"
 	"uuid"
 )
 
-type Type string
+type itemType string
 
 var (
-	Image    Type = "image"
-	Model3D  Type = "3d"
-	Audio    Type = "audio"
-	Video    Type = "video"
-	Document Type = "document"
-	Archive  Type = "archive"
+	Image    itemType = "image"
+	Model3D  itemType = "3d"
+	Audio    itemType = "audio"
+	Video    itemType = "video"
+	Document itemType = "document"
+	Archive  itemType = "archive"
 )
+
+// Каноничное расширение от mtype.Extension() -> разрешенные синонимы
+var extensionAliases = map[string][]string{
+	// Images
+	".jpg":  {".jpeg", ".jpe", ".jfif"},
+	".tiff": {".tif"},
+
+	// Video
+	".mp4": {".m4v"},
+	".mov": {".qt"},
+	".mpg": {".mpeg", ".mpe", ".m2v"},
+	".ts":  {".mts", ".m2ts"},
+
+	// Audio
+	".ogg": {".oga", ".opus"},
+	".aif": {".aiff", ".aifc"},
+
+	// Documents & Text
+	".doc": {".dot"},
+	".xls": {".xla", ".xlt"},
+	".ppt": {".pot", ".pps"},
+	".txt": {".csv", ".tsv", ".log", ".conf", ".ini", ".env"},
+
+	// Archives & 3D
+	".tar":  {".gtar"},
+	".gz":   {".tgz", ".prproj"},
+	".step": {".stp"},
+}
 
 type Item struct {
 	ID        int64           `db:"id" json:"id"`
 	CreatorID uuid.UUID       `db:"creator_id" json:"creator_id"`
 	OwnerID   uuid.UUID       `db:"owner_id" json:"owner_id"`
 	Key       string          `db:"key" json:"key"`
-	Type      Type            `db:"type" json:"type"`
-	MimeType  string          `db:"mime_type" json:"mime_type"`
-	Size      int64           `db:"file_size_bytes" json:"size"`
-	Meta      json.RawMessage `db:"metadata" json:"metadata"`
+	Type      itemType        `db:"type" json:"type"`
+	Hash      string          `db:"hash" json:"hash"`
+	MetaData  json.RawMessage `db:"metadata" json:"metadata"`
 	CreatedAt time.Time       `db:"created_at" json:"created_at"`
 }
 
@@ -43,13 +71,21 @@ type HistoryItem struct {
 type Metadata interface {
 	ImageMetadata | Model3DMetadata | AudioMetadata | VideoMetadata | DocumentMetadata | ArchiveMetadata
 }
+
+type headerMetadata struct {
+	MimeType string               `json:"mime_type"`
+	Filename string               `json:"filename"`
+	Size     int64                `json:"size"`
+	Header   textproto.MIMEHeader `json:"header"`
+}
 type ImageMetadata struct {
+	headerMetadata
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
 	BlurHash string `json:"blur_hash"`
 }
-
 type Model3DMetadata struct {
+	headerMetadata
 	PolygonCount  int    `json:"polygon_count"`
 	VertexCount   int    `json:"vertex_count"`
 	HasTexture    bool   `json:"has_texture"`
@@ -57,8 +93,8 @@ type Model3DMetadata struct {
 	HasAnimations bool   `json:"has_animations"`
 	RenderEngine  string `json:"render_engine"`
 }
-
 type AudioMetadata struct {
+	headerMetadata
 	Duration     time.Duration `json:"duration"`
 	SampleRateHZ int           `json:"sample_rate_hz"`
 	BitrateKbps  int           `json:"bitrate_kbps"`
@@ -66,16 +102,18 @@ type AudioMetadata struct {
 	WaveformData []float32
 }
 type VideoMetadata struct {
+	headerMetadata
 	Duration time.Duration `json:"duration"`
 	Width    int           `json:"width"`
 	Height   int           `json:"height"`
 }
 type DocumentMetadata struct {
-	PageCount int    `json:"page_count"`
-	Language  string `json:"language"`
+	headerMetadata
+	PageCount int `json:"page_count"`
 }
 type ArchiveMetadata struct {
+	headerMetadata
 	FileCount             int      `json:"file_count"`
-	UncompressedSizeBytes int      `json:"uncompressed_size_bytes"`
-	FileTree              []string `json:"file_tree"`
+	UncompressedSizeBytes int64    `json:"uncompressed_size_bytes"`
+	Tree                  []string `json:"tree"`
 }

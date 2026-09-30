@@ -36,7 +36,12 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("failed to load config(%w): %s", apperr.ErrError, err)
 	}
 
-	client := s3.NewFromConfig(s3Config)
+	client := s3.NewFromConfig(s3Config, func(o *s3.Options) {
+		if cfg.Endpoint != "" {
+			o.BaseEndpoint = aws.String(cfg.Endpoint)
+		}
+		o.UsePathStyle = true
+	})
 
 	return &Client{
 		s3Client: client,

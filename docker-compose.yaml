@@ -2,6 +2,7 @@
 services:
   postgres:
     image: postgres:18-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: db
       POSTGRES_USER: test

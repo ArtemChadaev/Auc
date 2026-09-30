@@ -32,9 +32,8 @@ create table items (
     creator_id uuid not null references users(id),
     owner_id uuid not null references users(id),
     key text not null unique,
+    hash text not null unique,
     type text not null constraint type_is check (type in ('image', '3d', 'audio', 'video', 'document', 'archive')),
-    mime_type text not null,
-    file_size_bytes bigint not null,
     metadata jsonb default '{}'::jsonb,
     created_at timestamptz not null default now()
 );
