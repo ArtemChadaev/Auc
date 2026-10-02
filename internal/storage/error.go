@@ -10,31 +10,29 @@ import (
 )
 
 var (
-	ErrNotFound            = errors.New("record not found")
-	ErrUniqueViolation     = errors.New("unique violation")
-	ErrForeignKeyViolation = errors.New("foreign key violation")
-	ErrDeadlock            = errors.New("deadlock")
-	ErrDB                  = errors.New("database error")
-	ErrCheckViolation      = errors.New("check violation")
+	ErrNotFound            = apperr.NewAppErrorString("record not found", -4)
+	ErrUniqueViolation     = apperr.NewAppErrorString("unique violation", -4)
+	ErrForeignKeyViolation = apperr.NewAppErrorString("foreign key violation", -4)
+	ErrDeadlock            = apperr.NewAppErrorString("deadlock", 4)
+	ErrDB                  = apperr.NewAppErrorString("database error", 4)
+	ErrCheckViolation      = apperr.NewAppErrorString("check violation", -4)
 )
 
 func ErrRepo(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("storage.ErrRepo(%w): %w, %v", apperr.ErrDebug, ErrNotFound, err)
+		return fmt.Errorf("storage.ErrRepo: %w, %v", ErrNotFound, err)
 	}
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
-		if pgErr.Code == "23505" {
-			return fmt.Errorf("storage.ErrRepo(%w): %w: %v", apperr.ErrDebug, ErrUniqueViolation, err)
-		}
-		if pgErr.Code == "23503" {
-			return fmt.Errorf("storage.ErrRepo(%w): %w: %v", apperr.ErrDebug, ErrForeignKeyViolation, err)
-		}
-		if pgErr.Code == "40P01" {
-			return fmt.Errorf("storage.ErrRepo(%w): %w: %v", apperr.ErrError, ErrDeadlock, err)
-		}
-		if pgErr.Code == "23514" {
-			return fmt.Errorf("storage.ErrRepo(%w): %w: %v", apperr.ErrDebug, ErrCheckViolation, err)
+		switch pgErr.Code {
+		case "23505":
+			return fmt.Errorf("storage.ErrRepo: %w: %v", ErrUniqueViolation, err)
+		case "23503":
+			return fmt.Errorf("storage.ErrRepo: %w: %v", ErrForeignKeyViolation, err)
+		case "40P01":
+			return fmt.Errorf("storage.ErrRepo: %w: %v", ErrDeadlock, err)
+		case "23514":
+			return fmt.Errorf("storage.ErrRepo: %w: %v", ErrCheckViolation, err)
 		}
 	}
-	return fmt.Errorf("storage.ErrRepo(%w): %w: %v", apperr.ErrWarn, ErrDB, err)
+	return fmt.Errorf("storage.ErrRepo: %w: %v", ErrDB, err)
 }

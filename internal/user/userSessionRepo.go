@@ -6,7 +6,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
 	"github.com/ArtemChadaev/Auction/internal/storage"
 	"github.com/jackc/pgx/v5"
@@ -66,7 +65,7 @@ func (r *Repo) revokedToken(ctx context.Context, tokenID int64, uid uuid.UUID) e
 		return fmt.Errorf("userSessionRepo.revokedToken(uid=%v): %w", uid, storage.ErrRepo(err))
 	}
 	if res.RowsAffected() == 0 {
-		return fmt.Errorf("userSessionRepo.revokedToken(%w): %w", apperr.ErrDebug, storage.ErrNotFound)
+		return fmt.Errorf("userSessionRepo.revokedToken: %w", storage.ErrNotFound)
 	}
 	return nil
 }

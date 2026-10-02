@@ -51,7 +51,7 @@ func createPassword(password string) (string, error) {
 	salt := make([]byte, SaltLength)
 	_, err := rand.Read(salt)
 	if err != nil {
-		return "", fmt.Errorf(`user.createPassword(%w): %v`, apperr.ErrWarn, err)
+		return "", fmt.Errorf(`user.createPassword: %v`, apperr.NewAppError(err, 4))
 	}
 	hash := argon2.IDKey([]byte(password), salt, Time, Memory, Parallelism, KeyLength)
 	b64Salt := base64.RawStdEncoding.EncodeToString(salt)
@@ -63,21 +63,21 @@ func createPassword(password string) (string, error) {
 func checkPassword(passHash, password string) error {
 	parts := strings.Split(passHash, "$")
 	if len(parts) != 6 {
-		return fmt.Errorf(`user.checkPassword(%w)"`, apperr.ErrWarn)
+		return apperr.NewAppErrorString("user.checkPassword", 4)
 	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
-		return fmt.Errorf(`user.checkPassword(%w): %v`, apperr.ErrWarn, err)
+		return apperr.NewAppErrorString("user.checkPassword", 4)
 	}
 	pass, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
-		return fmt.Errorf(`user.checkPassword(%w): %v`, apperr.ErrWarn, err)
+		return apperr.NewAppErrorString("user.checkPassword", 4)
 	}
 	passDB := argon2.IDKey([]byte(password), salt, Time, Memory, Parallelism, KeyLength)
 
 	if subtle.ConstantTimeCompare(passDB, pass) != 1 {
-		return fmt.Errorf("user.checkPassword(%w)", apperr.ErrDebug)
+		return apperr.NewAppErrorString("user.checkPassword", -4)
 	}
 	return nil
 }
@@ -119,7 +119,7 @@ func (s *Service) authPassword(ctx context.Context, email string, password strin
 		return tokens, fmt.Errorf("user.authPassword: %w", err)
 	}
 	if err = checkPassword(passHash, password); err != nil {
-		return tokens, fmt.Errorf("user.authPassword(%w): %w: %v", apperr.ErrDebug, apperr.ErrUnauthorized, err)
+		return tokens, fmt.Errorf("user.authPassword: %w", err)
 	}
 
 	tokens, err = createTokens(email, uid)

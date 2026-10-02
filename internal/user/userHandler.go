@@ -3,14 +3,13 @@ package user
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
-	"github.com/ArtemChadaev/Auction/internal/httpx"
+	"github.com/ArtemChadaev/Auction/cmd/httpx"
 	"github.com/ArtemChadaev/Auction/internal/storage"
 	"github.com/justinas/alice"
 )
@@ -27,7 +26,6 @@ type service interface {
 	deleteUser(ctx context.Context, uid uuid.UUID) error
 }
 
-// TODO: ERROR: Всё сделать и перепроверить в trim!!!!! иначе ошибка будет
 type Handler struct {
 	service service
 }
@@ -39,7 +37,7 @@ func NewHandler(service service) *Handler {
 }
 
 func getDevice(r *http.Request) Device {
-
+	//TODO:
 	return Device{}
 }
 
@@ -51,7 +49,7 @@ type userReq struct {
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	req, err := httpx.DecodeJSON[userReq](r)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.login: %w", err))
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
 		return
 	}
 
@@ -59,16 +57,18 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, apperr.ErrUnauthorized) {
 			slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
-			http.Error(w, httpx.InvalidAuth, http.StatusUnauthorized)
+			httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
 		} else {
-			httpx.WriteError(w, r, fmt.Errorf("userHandler.login: %w", err))
+			apperr.Log(r.Context(), "", err)
+			httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		}
 		return
 	}
 
 	session, err := h.service.tokenResponds(r.Context(), tokens.RefreshToken)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.login: %w", err))
+		apperr.Log(r.Context(), "", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
 	}
 	responds := tokenResponds{
@@ -87,7 +87,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 	}
 	http.SetCookie(w, cookie)
-	httpx.WriteJSON(w, http.StatusOK, responds)
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+		Data: responds,
+	})
 }
 
 type registerReq struct {
@@ -100,7 +103,7 @@ type registerReq struct {
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	req, err := httpx.DecodeJSON[registerReq](r)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
 		return
 	}
 
@@ -108,15 +111,17 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, storage.ErrUniqueViolation) {
 			slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
-			http.Error(w, httpx.FieldIsTaken, http.StatusUnprocessableEntity)
+			httpx.WriteResponse(w, httpx.ErrRespFieldIsTaken)
 		} else {
-			httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
+			apperr.Log(r.Context(), "", err)
+			httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		}
 		return
 	}
 	session, err := h.service.tokenResponds(r.Context(), tokens.RefreshToken)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
+		apperr.Log(r.Context(), "", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
 	}
 	responds := tokenResponds{
@@ -135,7 +140,10 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 	}
 	http.SetCookie(w, cookie)
-	httpx.WriteJSON(w, http.StatusOK, responds)
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+		Data: responds,
+	})
 }
 
 type refreshIdReq struct {
@@ -145,21 +153,23 @@ type refreshIdReq struct {
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	req, err := httpx.DecodeJSON[refreshIdReq](r)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.logout: %w", err))
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
 		return
 	}
 
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
-		slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
-		http.Error(w, "user not found", http.StatusNotFound)
+		httpx.WriteResponse(w, httpx.ErrRespNotFound)
 		return
 	}
 	if err = h.service.logout(r.Context(), req.ID, uid); err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.logout: %w", err))
+		apperr.Log(r.Context(), "", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, nil)
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+	})
 }
 
 type findRefreshReq struct {
@@ -169,7 +179,7 @@ type findRefreshReq struct {
 func (h *Handler) findRefresh(w http.ResponseWriter, r *http.Request) {
 	req, err := httpx.DecodeJSON[findRefreshReq](r)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.findRefresh: %w", err))
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
 		return
 	}
 
@@ -189,36 +199,40 @@ func (h *Handler) findRefresh(w http.ResponseWriter, r *http.Request) {
 	sessions, err := h.service.findTokens(r.Context(), uid, current)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
-			http.Error(w, httpx.NotFound, http.StatusNotFound)
+			httpx.WriteResponse(w, httpx.ErrRespNotFound)
 		} else {
-			httpx.WriteError(w, r, fmt.Errorf("userHandler.findRefresh: %w", err))
+			apperr.Log(r.Context(), "", err)
+			httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		}
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, sessions)
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+		Data: sessions,
+	})
 }
 
 func (h *Handler) loginToken(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("refresh_token")
 	if err != nil {
 		slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
-		http.Error(w, httpx.InvalidAuth, http.StatusUnauthorized)
+		httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
 		return
 	}
 	tokens, err := h.service.authRefresh(r.Context(), cookie.Value)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
-			http.Error(w, httpx.InvalidAuth, http.StatusUnauthorized)
+			httpx.WriteResponse(w, httpx.ErrRespNotFound)
 		} else {
-			httpx.WriteError(w, r, fmt.Errorf("userHandler.loginToken: %w", err))
+			apperr.Log(r.Context(), "", err)
+			httpx.WriteResponse(w, httpx.ErrRespNotFound)
 		}
 		return
 	}
 	session, err := h.service.tokenResponds(r.Context(), tokens.RefreshToken)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
+		apperr.Log(r.Context(), "", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
 	}
 	responds := tokenResponds{
@@ -236,7 +250,10 @@ func (h *Handler) loginToken(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 	}
 	http.SetCookie(w, cookie)
-	httpx.WriteJSON(w, http.StatusOK, responds)
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+		Data: responds,
+	})
 }
 
 // RoutesAuth /api/auth
@@ -256,16 +273,16 @@ func (h *Handler) RoutesAuth(authChain alice.Chain) http.Handler {
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
-		slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
-		http.Error(w, "user not found", http.StatusNotFound)
+		apperr.Log(r.Context(), "", err)
+		httpx.WriteResponse(w, httpx.ErrRespNotFound)
 		return
 	}
 	user, err := h.service.getUser(r.Context(), uid)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, user)
+	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK, Data: user})
 }
 
 type newNameReq struct {
@@ -275,7 +292,7 @@ type newNameReq struct {
 func (h *Handler) patchUserName(w http.ResponseWriter, r *http.Request) {
 	req, err := httpx.DecodeJSON[newNameReq](r)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
 		return
 	}
 
@@ -287,10 +304,11 @@ func (h *Handler) patchUserName(w http.ResponseWriter, r *http.Request) {
 	}
 	err = h.service.patchUserName(r.Context(), uid, req.Name)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
+		apperr.Log(r.Context(), "", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, nil)
+	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK})
 }
 
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
@@ -302,10 +320,11 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	err = h.service.deleteUser(r.Context(), uid)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("userHandler.register: %w", err))
+		apperr.Log(r.Context(), "", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, nil)
+	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK})
 }
 
 // RoutesUser /api/user

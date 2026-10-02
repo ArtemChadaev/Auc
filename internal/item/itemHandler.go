@@ -3,7 +3,6 @@ package item
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,8 +11,9 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
-	"github.com/ArtemChadaev/Auction/internal/httpx"
+	"github.com/ArtemChadaev/Auction/cmd/httpx"
 	"github.com/ArtemChadaev/Auction/internal/storage"
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/justinas/alice"
@@ -146,7 +146,7 @@ func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 	_, err = file.Seek(0, io.SeekStart)
 	if err != nil {
 		slog.DebugContext(r.Context(), "offset 0")
-		http.Error(w, httpx.InternalServer, http.StatusInternalServerError)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
 	}
 
@@ -159,12 +159,12 @@ func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 		Header:   header.Header,
 	}
 	if err = h.service.create(r.Context(), fType, mtype.String(), hmData, file); err != nil {
-		slog.DebugContext(r.Context(), "error creating item", slog.Any("error", err))
-		http.Error(w, httpx.InternalServer, http.StatusInternalServerError)
+		apperr.Log(r.Context(), "error creating item", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusCreated, fType)
+	httpx.WriteResponse(w, httpx.Response{Code: http.StatusCreated, Data: fType})
 }
 
 func (h *Handler) RouterUpload() http.Handler {
@@ -181,7 +181,7 @@ func (h *Handler) newOwner(w http.ResponseWriter, r *http.Request) {
 		Description string    `json:"description"`
 	}](r)
 	if err != nil {
-		httpx.WriteError(w, r, fmt.Errorf("itemHandler.newOwner: %w", err))
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
 		return
 	}
 
@@ -195,14 +195,14 @@ func (h *Handler) newOwner(w http.ResponseWriter, r *http.Request) {
 	err = h.service.newOwner(r.Context(), uid, req.NewOwner, req.ItemID, req.Description)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			slog.DebugContext(r.Context(), "", slog.String("error", err.Error()))
-			http.Error(w, httpx.NotFound, http.StatusNotFound)
+			httpx.WriteResponse(w, httpx.ErrRespNotFound)
 		} else {
-			httpx.WriteError(w, r, fmt.Errorf("itemHandler.newOwner: %w", err))
+			apperr.Log(r.Context(), "", err)
+			httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		}
 		return
 	}
-	httpx.WriteJSON(w, http.StatusAccepted, nil)
+	httpx.WriteResponse(w, httpx.Response{Code: http.StatusAccepted})
 }
 
 // Router /api/item. chain - авторизация

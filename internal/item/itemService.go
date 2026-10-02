@@ -75,7 +75,9 @@ func (s *Service) create(ctx context.Context, iType itemType, mType string, hmDa
 
 		if _, err = io.Copy(hasher, prHash); err != nil {
 			slog.DebugContext(gCtx, "Failed to copy file to hasher", slog.Any("error", err))
-			return fmt.Errorf("item.create(%w): %v", apperr.ErrDebug, err)
+			if err != nil {
+				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, -4))
+			}
 		}
 		return
 	})
@@ -94,7 +96,7 @@ func (s *Service) create(ctx context.Context, iType itemType, mType string, hmDa
 			}
 			metadata, err = json.Marshal(image)
 			if err != nil {
-				return fmt.Errorf("item.create(%w): %v", apperr.ErrWarn, err)
+				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
 			}
 			break
 		case Model3D:
@@ -104,7 +106,7 @@ func (s *Service) create(ctx context.Context, iType itemType, mType string, hmDa
 			}
 			metadata, err = json.Marshal(model3D)
 			if err != nil {
-				return fmt.Errorf("item.create(%w): %v", apperr.ErrWarn, err)
+				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
 			}
 			break
 		case Audio:
@@ -114,7 +116,7 @@ func (s *Service) create(ctx context.Context, iType itemType, mType string, hmDa
 			}
 			metadata, err = json.Marshal(audio)
 			if err != nil {
-				return fmt.Errorf("item.create(%w): %v", apperr.ErrWarn, err)
+				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
 			}
 			break
 		case Video:
@@ -124,17 +126,17 @@ func (s *Service) create(ctx context.Context, iType itemType, mType string, hmDa
 			}
 			metadata, err = json.Marshal(video)
 			if err != nil {
-				return fmt.Errorf("item.create(%w): %v", apperr.ErrWarn, err)
+				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
 			}
 			break
 		case Document:
 			doc, err := getDocumentMetadata(gCtx, hmData, mType, prMData)
 			if err != nil {
-				return fmt.Errorf("item.create: %w", err)
+				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
 			}
 			metadata, err = json.Marshal(doc)
 			if err != nil {
-				return fmt.Errorf("item.create(%w): %v", apperr.ErrWarn, err)
+				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
 			}
 			break
 		case Archive:
@@ -144,7 +146,7 @@ func (s *Service) create(ctx context.Context, iType itemType, mType string, hmDa
 			}
 			metadata, err = json.Marshal(archive)
 			if err != nil {
-				return fmt.Errorf("item.create(%w): %v", apperr.ErrWarn, err)
+				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
 			}
 			break
 		default:
@@ -175,14 +177,14 @@ func (s *Service) create(ctx context.Context, iType itemType, mType string, hmDa
 	hashString := hex.EncodeToString(hasher.Sum(nil))
 	if has, err := s.repo.hasHash(ctx, hashString); has {
 		if err != nil {
-			return fmt.Errorf("item.create: %v", err)
+			return fmt.Errorf("item.create: %w", err)
 		}
 		//TODO: Сделать функцию удаление из s3 по key и отдельно функцию вывод тогда данных для нахождения предмета у другого пользователя (id хз)
 	}
 
 	if err := s.repo.create(ctx, uid, key, hashString, iType, metadata); err != nil {
 		//TODO: функцию удаления из s3 тогда
-		return fmt.Errorf("item.create: %v", err)
+		return fmt.Errorf("item.create: %w", err)
 	}
 
 	return nil
@@ -191,7 +193,7 @@ func (s *Service) create(ctx context.Context, iType itemType, mType string, hmDa
 func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID int64, description string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("item.newOwner(%w): %w", apperr.ErrError, err)
+		return fmt.Errorf("item.newOwner: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -199,24 +201,24 @@ func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID 
 
 	oldOwner, err := txRepo.getOwnerForUpdate(ctx, itemID)
 	if err != nil {
-		return fmt.Errorf("item.newOwner: %v", err)
+		return fmt.Errorf("item.newOwner: %w", err)
 	}
 	if oldOwner != uid {
-		return fmt.Errorf("item.newOwner(%w): %v", apperr.ErrDebug, apperr.ErrForbidden)
+		return fmt.Errorf("item.newOwner: %w", apperr.ErrForbidden)
 	}
 
 	err = txRepo.newOwner(ctx, newOwner, itemID)
 	if err != nil {
-		return fmt.Errorf("item.newOwner: %v", err)
+		return fmt.Errorf("item.newOwner: %w", err)
 	}
 
 	err = txRepo.newHistory(ctx, itemID, oldOwner, newOwner, nil, &description)
 	if err != nil {
-		return fmt.Errorf("item.newOwner: %v", err)
+		return fmt.Errorf("item.newOwner: %w", err)
 	}
 
 	if err = tx.Commit(ctx); err != nil {
-		return fmt.Errorf("item.newOwner(%w): %v", apperr.ErrError, err)
+		return fmt.Errorf("item.newOwner: %w", apperr.NewAppError(err, 8))
 	}
 	return nil
 }

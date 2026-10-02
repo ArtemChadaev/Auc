@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"uuid"
 
-	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/internal/storage"
 	"github.com/jackc/pgx/v5"
 )
@@ -58,7 +57,7 @@ func (r *Repo) newOwner(ctx context.Context, uid uuid.UUID, id int64) error {
 		return fmt.Errorf("itemRepo.newOwner: %w", storage.ErrRepo(err))
 	}
 	if res.RowsAffected() == 0 {
-		return fmt.Errorf("itemRepo.newOwner(%w): %w", apperr.ErrDebug, storage.ErrNotFound)
+		return fmt.Errorf("itemRepo.newOwner: %w", storage.ErrNotFound)
 	}
 	return nil
 }

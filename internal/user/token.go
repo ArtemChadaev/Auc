@@ -3,7 +3,6 @@ package user
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"time"
 	"uuid"
@@ -13,7 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var ErrInvalidToken = errors.New("invalid token")
+var ErrInvalidToken = apperr.NewAppErrorString("invalid token", -4)
 
 type Tokens struct {
 	AccessToken  string
@@ -33,7 +32,7 @@ func generateAccessToken(email string, uuid uuid.UUID) (string, error) {
 
 	accessToken, err := token.SignedString([]byte(cfg.Cfg.JwtSecret))
 	if err != nil {
-		return "", fmt.Errorf("token.generateAccessToken(%w): %v", apperr.ErrWarn, err)
+		return "", fmt.Errorf("token.generateAccessToken: %v", apperr.NewAppError(err, 4))
 	}
 	return accessToken, nil
 }
@@ -63,7 +62,7 @@ func VerifyAccessToken(accessToken string) (uuid.UUID, error) {
 
 	uid, err := uuid.Parse(claims["uuid"].(string))
 	if err != nil {
-		return [16]byte{}, fmt.Errorf("user.VerfiAccessToken(%w): %v", apperr.ErrWarn, err)
+		return [16]byte{}, fmt.Errorf("user.VerfiAccessToken: %v", apperr.NewAppError(err, 4))
 	}
 	return uid, nil
 }
@@ -77,7 +76,7 @@ func createTokens(email string, uuid uuid.UUID) (Tokens, error) {
 	}
 	rt := make([]byte, 32)
 	if _, err = rand.Read(rt); err != nil {
-		return tokens, fmt.Errorf("user.createTokens(%w): %v", apperr.ErrWarn, err)
+		return tokens, fmt.Errorf("user.createTokens: %v", apperr.NewAppError(err, 4))
 	}
 	tokens.RefreshToken = hex.EncodeToString(rt)
 	return tokens, nil

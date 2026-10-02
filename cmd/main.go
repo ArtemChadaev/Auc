@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
+	"github.com/ArtemChadaev/Auction/cmd/httpx/middleware"
 	"github.com/ArtemChadaev/Auction/cmd/logger"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
-	"github.com/ArtemChadaev/Auction/internal/httpx/middleware"
 	"github.com/ArtemChadaev/Auction/internal/item"
 	"github.com/ArtemChadaev/Auction/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"

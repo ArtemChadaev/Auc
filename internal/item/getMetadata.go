@@ -48,7 +48,7 @@ func getImageMetadata(ctx context.Context, header headerMetadata, mType string, 
 
 		_, err := io.Copy(io.MultiWriter(pw1, pw2), r)
 		if err != nil {
-			return fmt.Errorf("item.getImageMetadata(%w): %v", apperr.ErrDebug, err)
+			return fmt.Errorf("item.getImageMetadata: %w", apperr.NewAppError(err, -4))
 		}
 		return nil
 	})
@@ -59,7 +59,7 @@ func getImageMetadata(ctx context.Context, header headerMetadata, mType string, 
 		}()
 		srcImg, _, err := image.Decode(pr1)
 		if err != nil {
-			return fmt.Errorf("item.getImageMetadata(%w): %v", apperr.ErrDebug, err)
+			return fmt.Errorf("item.getImageMetadata: %w", apperr.NewAppError(err, 4))
 		}
 
 		bounds := srcImg.Bounds()
@@ -82,7 +82,7 @@ func getImageMetadata(ctx context.Context, header headerMetadata, mType string, 
 
 		hash, err := blurhash.Encode(4, 3, dstImg)
 		if err != nil {
-			return fmt.Errorf("item.getImageMetadata(%w): %v", apperr.ErrDebug, err)
+			return fmt.Errorf("item.getImageMetadata: %w", apperr.NewAppError(err, 4))
 		}
 		metadata = ImageMetadata{
 			headerMetadata: header,
@@ -99,7 +99,7 @@ func getImageMetadata(ctx context.Context, header headerMetadata, mType string, 
 		}()
 		config, _, err := image.DecodeConfig(pr2)
 		if err != nil {
-			return fmt.Errorf("item.getImageMetadata(%w): %v", apperr.ErrDebug, err)
+			return fmt.Errorf("item.getImageMetadata: %w", apperr.NewAppError(err, 4))
 		}
 		if config.Width*config.Height*4 > 50<<20 {
 			return apperr.ErrEntityTooLarge
@@ -120,12 +120,12 @@ func getArchiveMetadata(ctx context.Context, header headerMetadata, r io.Reader)
 	// Возвращает streamReader со сброшенным/буферизованным потоком для последующего чтения.
 	format, streamReader, err := archives.Identify(ctx, header.Filename, r)
 	if err != nil {
-		return ArchiveMetadata{}, fmt.Errorf("item.getArchiveMetadata(%w): %v", apperr.ErrDebug, err)
+		return ArchiveMetadata{}, fmt.Errorf("item.getArchiveMetadata: %w", apperr.NewAppError(err, 4))
 	}
 	// Проверяем, поддерживается ли извлечение/обход файлов для данного формата
 	extractor, ok := format.(archives.Extractor)
 	if !ok {
-		return ArchiveMetadata{}, fmt.Errorf("item.getArchiveMetadata(%w): format %T does not support extraction", apperr.ErrDebug, format)
+		return ArchiveMetadata{}, apperr.NewAppError(fmt.Errorf("item.getArchiveMetadata: format %T does not support extraction", format), 4)
 	}
 	var (
 		fileCount             int
@@ -147,7 +147,7 @@ func getArchiveMetadata(ctx context.Context, header headerMetadata, r io.Reader)
 		return nil
 	})
 	if err != nil {
-		return ArchiveMetadata{}, fmt.Errorf("item.getArchiveMetadata(%w): %v", apperr.ErrDebug, err)
+		return ArchiveMetadata{}, fmt.Errorf("item.getArchiveMetadata: %w", apperr.NewAppError(err, 4))
 	}
 	return ArchiveMetadata{
 		headerMetadata:        header,
@@ -164,7 +164,7 @@ func getModel3DMetadata(ctx context.Context, header headerMetadata, r io.Reader)
 	decoder := gltf.NewDecoder(r)
 	// NewDecoder умеет автоматически декодировать как .gltf (JSON), так и бинарный .glb поток
 	if err := decoder.Decode(doc); err != nil {
-		return Model3DMetadata{}, fmt.Errorf("item.getModel3DMetadata(%w): %v", apperr.ErrDebug, err)
+		return Model3DMetadata{}, fmt.Errorf("item.getModel3DMetadata: %w", apperr.NewAppError(err, 4))
 	}
 	var polygonCount int
 	var vertexCount int
@@ -263,7 +263,7 @@ func getDocumentMetadata(ctx context.Context, header headerMetadata, mType strin
 	//TODO: ERROR Убрать потом ReadAll всё потоково
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return DocumentMetadata{}, fmt.Errorf("item.getDocumentMetadata(%w): %v", apperr.ErrDebug, err)
+		return DocumentMetadata{}, fmt.Errorf("item.getDocumentMetadata: %w", apperr.NewAppError(err, 4))
 	}
 	rs := bytes.NewReader(data)
 	ext := strings.ToLower(filepath.Ext(header.Filename))
@@ -273,7 +273,7 @@ func getDocumentMetadata(ctx context.Context, header headerMetadata, mType strin
 		// pdfcpu считывает физическое количество страниц PDF
 		count, err := api.PageCount(ctx, rs, nil)
 		if err != nil {
-			return DocumentMetadata{}, fmt.Errorf("item.getDocumentMetadata(%w): %v", apperr.ErrDebug, err)
+			return DocumentMetadata{}, fmt.Errorf("item.getDocumentMetadata: %w", apperr.NewAppError(err, 4))
 		}
 		pageCount = count
 	case mType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
@@ -298,7 +298,7 @@ func getDocumentMetadata(ctx context.Context, header headerMetadata, mType strin
 func getAudioMetadata(ctx context.Context, header headerMetadata, r io.Reader) (AudioMetadata, error) {
 	data, err := ffprobe.ProbeReader(ctx, r)
 	if err != nil {
-		return AudioMetadata{}, fmt.Errorf("item.getAudioMetadata(%w): %v", apperr.ErrDebug, err)
+		return AudioMetadata{}, fmt.Errorf("item.getAudioMetadata: %w", apperr.NewAppError(err, 4))
 	}
 	var (
 		duration     time.Duration
@@ -338,7 +338,7 @@ func getAudioMetadata(ctx context.Context, header headerMetadata, r io.Reader) (
 func getVideoMetadata(ctx context.Context, header headerMetadata, r io.Reader) (VideoMetadata, error) {
 	data, err := ffprobe.ProbeReader(ctx, r)
 	if err != nil {
-		return VideoMetadata{}, fmt.Errorf("item.getVideoMetadata(%w): %v", apperr.ErrDebug, err)
+		return VideoMetadata{}, fmt.Errorf("item.getVideoMetadata: %w", apperr.NewAppError(err, 4))
 	}
 	var (
 		duration time.Duration

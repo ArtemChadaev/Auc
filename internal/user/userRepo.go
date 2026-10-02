@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"uuid"
 
-	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/internal/storage"
 )
 
@@ -62,7 +61,7 @@ func (r *Repo) patchUserName(ctx context.Context, uid uuid.UUID, name string) er
 		return fmt.Errorf("userRepo.patchUserName: %w", storage.ErrRepo(err))
 	}
 	if res.RowsAffected() == 0 {
-		return fmt.Errorf("userRepo.patchUserName(%w): %w", apperr.ErrDebug, storage.ErrNotFound)
+		return fmt.Errorf("userRepo.patchUserName: %w", storage.ErrNotFound)
 	}
 	return nil
 }
@@ -73,7 +72,7 @@ func (r *Repo) deleteUser(ctx context.Context, uid uuid.UUID) error {
 		return fmt.Errorf("userRepo.deleteUser: %w", storage.ErrRepo(err))
 	}
 	if res.RowsAffected() == 0 {
-		return fmt.Errorf("userRepo.deleteUser(%w): %w", apperr.ErrDebug, storage.ErrNotFound)
+		return fmt.Errorf("userRepo.deleteUser: %w", storage.ErrNotFound)
 	}
 	return nil
 }

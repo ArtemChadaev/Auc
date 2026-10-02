@@ -21,5 +21,5 @@ func GetUID(ctx context.Context) (uuid.UUID, error) {
 	if uid, ok := ctx.Value(UID).(uuid.UUID); ok {
 		return uid, nil
 	}
-	return uuid.Nil(), fmt.Errorf("context.GetUID(%w): %w", apperr.ErrDebug, apperr.ErrNotFoundContext)
+	return uuid.Nil(), fmt.Errorf("context.GetUID: %w", apperr.ErrNotFoundContext)
 }

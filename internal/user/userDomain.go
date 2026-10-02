@@ -1,9 +1,6 @@
 package user
 
 import (
-	"database/sql/driver"
-	"encoding/json"
-	"errors"
 	"time"
 	"uuid"
 )
@@ -21,29 +18,6 @@ type User struct {
 type Device struct {
 	OS      string `json:"os"`
 	Browser string `json:"browser"`
-}
-
-func (d Device) Value() (driver.Value, error) {
-	return json.Marshal(d)
-}
-
-func (d *Device) Scan(value interface{}) error {
-	if value == nil {
-		*d = Device{}
-		return nil
-	}
-
-	var bytes []byte
-	switch v := value.(type) {
-	case []byte:
-		bytes = v
-	case string:
-		bytes = []byte(v)
-	default:
-		return errors.New("invalid type for Device")
-	}
-
-	return json.Unmarshal(bytes, d)
 }
 
 type Session struct {

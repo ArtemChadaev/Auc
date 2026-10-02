@@ -11,13 +11,6 @@ import (
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
 )
 
-// Ошибки валидируются в handler (при api)
-// Все ошибки создаются в виде кастомного типа error Example: ErrNotFound
-// При возврате существующей ошибки используется fmt.Errorf("имяФайла.Метод: %w", err)
-// Example: fmt.Errorf("userRepo.findAccessToken: %w", err)
-// Если ошибка изза пользователя -> debug, чтото не так в программе Warn,
-// Ошибка мешает работать полностью (отказ db) Error (при возможности починки перезапуск)
-
 // Логи старта приложения и запуска Info, остальное debug
 type ContextHandler struct {
 	slog.Handler
@@ -59,7 +52,7 @@ func Init() {
 				return slog.String(a.Key, "0.0.0.0")
 			}
 			return a
-		}, // Скрываем ip и email чтоб не дое..ставали
+		},
 	}
 
 	slog.SetDefault(slog.New(ContextHandler{Handler: slog.NewJSONHandler(os.Stdout, opts)}))

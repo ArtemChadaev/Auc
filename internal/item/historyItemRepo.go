@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"uuid"
 
-	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/internal/storage"
 	"github.com/jackc/pgx/v5"
 )
 
 func (r *Repo) newHistory(ctx context.Context, itemID int64, oldUser, newUser uuid.UUID, lotID *int64, description *string) error {
 	if lotID == nil && description == nil || oldUser == newUser {
-		return fmt.Errorf("historyItemRepo.newHistory(%w): %w", apperr.ErrDebug, storage.ErrCheckViolation)
+		return fmt.Errorf("historyItemRepo.newHistory: %w", storage.ErrCheckViolation)
 	}
 	_, err := r.db.Exec(ctx, "Insert into history_item values(default, $1, $2, $3, default, $4, $5)", itemID, oldUser, newUser, lotID, description)
 	if err != nil {
