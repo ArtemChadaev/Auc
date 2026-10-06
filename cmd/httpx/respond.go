@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -16,18 +17,37 @@ type Response struct {
 	Data  any    `json:"data,omitempty"`
 }
 
-var ErrRespMarshal = Response{Code: http.StatusInternalServerError, Error: "failed to marshal response"}
+var (
+	ErrRespNotFound          = Response{Code: http.StatusNotFound, Error: "not found"}
+	ErrRespInvalidAuth       = Response{Code: http.StatusUnauthorized, Error: "invalid authorization"}
+	ErrRespInternalServer    = Response{Code: http.StatusInternalServerError, Error: "internal server error"}
+	ErrRespFieldIsTaken      = Response{Code: http.StatusConflict, Error: "field is taken"}
+	ErrRespMarshal           = Response{Code: http.StatusInternalServerError, Error: "failed to marshal response"}
+	ErrRespInvalidReqBody    = Response{Code: http.StatusBadRequest, Error: "invalid request body"}
+	ErrRespReqEntityTooLarge = Response{Code: http.StatusRequestEntityTooLarge, Error: "request entity too large"}
 
-// DecodeJSON декодирует и обрезает пробелы слева/справа
-func DecodeJSON[T any](r *http.Request) (T, error) {
+	// Upload
+	ErrRespHashAlreadyExists = Response{Code: http.StatusConflict, Error: "hash already exists"}
+	ErrRespFileAlreadyExists = Response{Code: http.StatusConflict, Error: "file already exists"}
+)
+
+// DecodeJSON декодирует и обрезает пробелы слева/справа. Сам отправляет ошибку клиенту
+func DecodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 	var req T
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.Is(err, maxBytesErr) {
+			WriteResponse(w, ErrRespReqEntityTooLarge)
+		} else {
+			WriteResponse(w, ErrRespInvalidReqBody)
+		}
 		return req, fmt.Errorf("respond.DecodeJSON: %v", apperr.NewAppError(err, 4))
 	}
 	val := reflect.ValueOf(&req).Elem()
 	if val.Kind() != reflect.Struct {
+		WriteResponse(w, ErrRespInvalidReqBody)
 		return req, fmt.Errorf("respond.DecodeJSON: %w", apperr.NewAppErrorString("not struct", 4))
 	}
 	for _, field := range val.Fields() {

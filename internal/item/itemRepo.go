@@ -3,7 +3,6 @@ package item
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"uuid"
 
@@ -83,15 +82,20 @@ func (r *Repo) delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// hasHash При ошибки bool -> true
-func (r *Repo) hasHash(ctx context.Context, hash string) (bool, error) {
-	row := r.db.QueryRow(ctx, "SELECT 1 FROM items WHERE metadata->>'hash' = $1 LIMIT 1", hash)
-	err := row.Scan()
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
+func (r *Repo) createS3(ctx context.Context, id uuid.UUID, hash string) error {
+	_, err := r.db.Exec(ctx, "INSERT INTO s3 (id, hash) VALUES ($1, $2)", id, hash)
 	if err != nil {
-		return true, fmt.Errorf("itemRepo.hasHash: %w", storage.ErrRepo(err))
+		return fmt.Errorf("itemRepo.createS3: %w", storage.ErrRepo(err))
 	}
-	return true, nil
+	return nil
+}
+
+// hasHash проверяет, существует ли уже данный хеш в таблице s3
+func (r *Repo) hasHash(ctx context.Context, hash string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM s3 WHERE hash = $1)", hash).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("itemRepo.hasHash: %w", storage.ErrRepo(err))
+	}
+	return exists, nil
 }

@@ -50,9 +50,8 @@ type Item struct {
 	ID        int64           `db:"id" json:"id"`
 	CreatorID uuid.UUID       `db:"creator_id" json:"creator_id"`
 	OwnerID   uuid.UUID       `db:"owner_id" json:"owner_id"`
-	Key       string          `db:"key" json:"key"`
+	S3ID      uuid.UUID       `db:"s3_id" json:"-"`
 	Type      itemType        `db:"type" json:"type"`
-	Hash      string          `db:"hash" json:"hash"`
 	MetaData  json.RawMessage `db:"metadata" json:"metadata"`
 	CreatedAt time.Time       `db:"created_at" json:"created_at"`
 }
@@ -80,9 +79,10 @@ type headerMetadata struct {
 }
 type ImageMetadata struct {
 	headerMetadata
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
-	BlurHash string `json:"blur_hash"`
+	Width    int       `json:"width"`
+	Height   int       `json:"height"`
+	BlurHash string    `json:"blur_hash"`
+	Preview  uuid.UUID `json:"preview"`
 }
 type Model3DMetadata struct {
 	headerMetadata
@@ -99,13 +99,18 @@ type AudioMetadata struct {
 	SampleRateHZ int           `json:"sample_rate_hz"`
 	BitrateKbps  int           `json:"bitrate_kbps"`
 	Channels     int           `json:"channels"`
-	WaveformData []float32
+	WaveformData []float32     `json:"waveform_data"`
+	PreviewImage uuid.UUID     `json:"preview_image"`
+	PreviewAudio uuid.UUID     `json:"preview_audio"`
 }
 type VideoMetadata struct {
 	headerMetadata
-	Duration time.Duration `json:"duration"`
-	Width    int           `json:"width"`
-	Height   int           `json:"height"`
+	Duration     time.Duration `json:"duration"`
+	Width        int           `json:"width"`
+	Height       int           `json:"height"`
+	BlurHash     string        `json:"blur_hash"`
+	PreviewImage uuid.UUID     `json:"preview_image"`
+	PreviewVideo uuid.UUID     `json:"preview_video"`
 }
 type DocumentMetadata struct {
 	headerMetadata

@@ -54,17 +54,16 @@ func main() {
 
 	// http
 	mux := http.NewServeMux()
-	globalChain := alice.New(middleware.Logger)
+	// Для всех запросах 5 мбайт, И для json и для
+	globalChain := alice.New(middleware.Logger, middleware.MaxBodySize(5<<20))
 	authChain := alice.New(middleware.AuthAccessToken)
-	standardChain := alice.New(middleware.MaxBodySize(1 << 20))
 
 	userHandler := user.NewHandler(user.NewService(user.NewRepo(pool)))
-	mux.Handle("/api/auth/", http.StripPrefix("/api/auth", standardChain.Then(userHandler.RoutesAuth(authChain))))
-	mux.Handle("/api/user/", http.StripPrefix("/api/user", standardChain.Then(authChain.Then(userHandler.RoutesUser()))))
+	mux.Handle("/api/auth/", http.StripPrefix("/api/auth", userHandler.RoutesAuth(authChain)))
+	mux.Handle("/api/user/", http.StripPrefix("/api/user", authChain.Then(userHandler.RoutesUser())))
 
 	itemHandler := item.NewHandler(item.NewService(pool, s3, item.NewRepo(pool)))
-	mux.Handle("/api/item/", http.StripPrefix("/api/item", standardChain.Then(itemHandler.Router(authChain))))
-	mux.Handle("/api/upload/", http.StripPrefix("/api/upload", alice.New(middleware.MaxBodySize(50<<20)).Then(itemHandler.RouterUpload())))
+	mux.Handle("/api/upload/", http.StripPrefix("/api/upload", itemHandler.RouterUpload()))
 
 	// М.б добавть сначала globalChain а потом все очень странные роутеры (по типу upload, -> отдельно)
 	srv := &http.Server{

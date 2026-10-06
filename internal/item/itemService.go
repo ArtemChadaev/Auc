@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 	"uuid"
 
@@ -54,6 +56,17 @@ func NewService(pool *pgxpool.Pool, s3 *storageS3.Client, repo repo) *Service {
 	}
 }
 
+func createHash(ctx context.Context, r io.Reader) (hash.Hash, error) {
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, r); err != nil {
+		apperr.Log(ctx, "Failed to copy file to hasher", err)
+		return nil, fmt.Errorf("item.createHash: %w", apperr.NewAppError(err, -4))
+	}
+	return hasher, nil
+}
+
+// Так Надо сделать генерацию хеша и отправку в s3 одновременным всегда (обертку над 2 функциями), а остальное по отдельности
+// create TODO: Надо чтобы видео/аудио давало только 1 минуту (если меньше то половину длины), изображение только неполное разрешение м.б. с чем то поверх
 func (s *Service) create(ctx context.Context, iType itemType, mType string, hmData headerMetadata, file io.Reader, uid uuid.UUID) error {
 	// Создаём контекст для отмене при ошибке
 	ctxWithCause, cancel := context.WithTimeoutCause(ctx, time.Minute*10, apperr.ErrTimeout)
@@ -190,7 +203,18 @@ func (s *Service) create(ctx context.Context, iType itemType, mType string, hmDa
 	return nil
 }
 
-func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID int64, description string) error {
+// Публичные
+func (s *Service) getItem(ctx context.Context, id int64) (Item, error) {
+	item, err := s.repo.getItem(ctx, id)
+	if err != nil {
+		return Item{}, fmt.Errorf("item.get: %w", err)
+	}
+	return item, nil
+}
+
+// только для пользователей
+// Не экспортировать, общая для обёрток,
+func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID int64, lotID *int64, description *string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("item.newOwner: %w", err)
@@ -212,7 +236,7 @@ func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID 
 		return fmt.Errorf("item.newOwner: %w", err)
 	}
 
-	err = txRepo.newHistory(ctx, itemID, oldOwner, newOwner, nil, &description)
+	err = txRepo.newHistory(ctx, itemID, oldOwner, newOwner, lotID, description)
 	if err != nil {
 		return fmt.Errorf("item.newOwner: %w", err)
 	}
@@ -221,4 +245,26 @@ func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID 
 		return fmt.Errorf("item.newOwner: %w", apperr.NewAppError(err, 8))
 	}
 	return nil
+}
+
+// Для передачи в этом пакете
+func (s *Service) giftItem(ctx context.Context, uid, newOwner uuid.UUID, itemID int64, description string) error {
+	return s.newOwner(ctx, uid, newOwner, itemID, nil, &description)
+}
+
+// NewOwnerWhoWinLot Для экспорта в пакете lot
+func (s *Service) NewOwnerWhoWinLot(ctx context.Context, uid, newOwner uuid.UUID, itemID, lotID int64) error {
+	return s.newOwner(ctx, uid, newOwner, itemID, &lotID, nil)
+}
+
+func (s *Service) hasHash(ctx context.Context, hash string) (bool, error) {
+	return s.repo.hasHash(ctx, strings.ToLower(hash))
+}
+
+func (s *Service) createURLForUpload(ctx context.Context, uuid4 uuid.UUID, fileSize int64) (string, error) {
+	url, err := s.s3.GetURLForUpload(ctx, uuid4, fileSize)
+	if err != nil {
+		return "", fmt.Errorf("itemService.createURLForUpload: %w", err)
+	}
+	return url, nil
 }

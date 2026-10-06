@@ -47,9 +47,9 @@ type userReq struct {
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
-	req, err := httpx.DecodeJSON[userReq](r)
+	req, err := httpx.DecodeJSON[userReq](w, r)
 	if err != nil {
-		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		apperr.Log(r.Context(), "", err)
 		return
 	}
 
@@ -101,9 +101,9 @@ type registerReq struct {
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
-	req, err := httpx.DecodeJSON[registerReq](r)
+	req, err := httpx.DecodeJSON[registerReq](w, r)
 	if err != nil {
-		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		apperr.Log(r.Context(), "", err)
 		return
 	}
 
@@ -151,9 +151,9 @@ type refreshIdReq struct {
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
-	req, err := httpx.DecodeJSON[refreshIdReq](r)
+	req, err := httpx.DecodeJSON[refreshIdReq](w, r)
 	if err != nil {
-		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		apperr.Log(r.Context(), "", err)
 		return
 	}
 
@@ -177,9 +177,9 @@ type findRefreshReq struct {
 }
 
 func (h *Handler) findRefresh(w http.ResponseWriter, r *http.Request) {
-	req, err := httpx.DecodeJSON[findRefreshReq](r)
+	req, err := httpx.DecodeJSON[findRefreshReq](w, r)
 	if err != nil {
-		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		apperr.Log(r.Context(), "", err)
 		return
 	}
 
@@ -290,9 +290,9 @@ type newNameReq struct {
 }
 
 func (h *Handler) patchUserName(w http.ResponseWriter, r *http.Request) {
-	req, err := httpx.DecodeJSON[newNameReq](r)
+	req, err := httpx.DecodeJSON[newNameReq](w, r)
 	if err != nil {
-		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		apperr.Log(r.Context(), "", err)
 		return
 	}
 

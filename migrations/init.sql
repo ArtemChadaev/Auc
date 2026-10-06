@@ -26,13 +26,18 @@ create table user_sessions (
 
 create index user_sessions_allow on user_sessions (user_id) WHERE revoked_at is null;
 
+-- id и является ключом в s3
+create table s3 (
+    id uuid primary key,
+    hash text not null unique
+);
+
 -- key - ключ от s3 хранилища
 create table items (
     id bigint generated always as identity primary key,
     creator_id uuid not null references users(id),
     owner_id uuid not null references users(id),
-    key text not null unique,
-    hash text not null unique,
+    s3_id uuid not null references s3(id),
     type text not null constraint type_is check (type in ('image', '3d', 'audio', 'video', 'document', 'archive')),
     metadata jsonb default '{}'::jsonb,
     created_at timestamptz not null default now()

@@ -360,3 +360,5 @@ func getVideoMetadata(ctx context.Context, header headerMetadata, r io.Reader) (
 		Height:         height,
 	}, nil
 }
+
+//TODO: Создание первью идет одновременно со всем, но его загрузка уже просто в целом виде
