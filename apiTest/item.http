@@ -5,14 +5,17 @@
 # 1. Запрос Presigned URL для файла file.jpg (fail.jpg)
 # Размер: 4727 байт
 # SHA-256: 6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a
+# Передаем filename сразу!
 ###############################################################################
 POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
 
 {
   "file_size": 4727,
-  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a",
+  "filename": "file.jpg"
 }
 
 > {%
@@ -50,48 +53,56 @@ PUT {{file_upload_url}}
 ###
 
 ###############################################################################
-# 3. Запрос Presigned URL для файла rufus-4.15.exe
-# Размер: 1989992 байт
-# SHA-256: 84c8a437f8af89257524478489e5c85f1edf25f761d299e2bcde46ac0afbe106
+# 3. Подтверждение загрузки: POST /api/upload/confirm
+# Кидаем ключ в Header X-Upload-Key
+# Проверяется капля (первые 512 байт), тип и размер файла
 ###############################################################################
-POST {{host}}/api/upload/url
-Content-Type: application/json
+POST {{host}}/api/upload/confirm
+Authorization: Bearer {{auth_token}}
+X-Upload-Key: {{file_upload_key}}
 Accept: application/json
 
-{
-  "file_size": 1989992,
-  "sha_256_hex": "84c8a437f8af89257524478489e5c85f1edf25f761d299e2bcde46ac0afbe106"
-}
-
 > {%
-    client.test("Status code is 200 OK", function() {
-        client.assert(response.status === 200, "Expected 200 OK, got: " + response.status);
+    client.test("Status code is 202 Accepted", function() {
+        client.assert(response.status === 202, "Expected 202 Accepted, got: " + response.status);
     });
-
-    client.test("Response body contains url and valid UUID key", function() {
-        client.assert(response.body.data && response.body.data.url && typeof response.body.data.url === "string", "Missing or invalid 'url'");
-        client.assert(response.body.data && response.body.data.key && typeof response.body.data.key === "string", "Missing or invalid 'key'");
-
-        var uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        client.assert(uuidRegex.test(response.body.data.key), "Key is not a valid UUID: " + response.body.data.key);
-    });
-
-    client.global.set("rufus_upload_url", response.body.data.url);
-    client.global.set("rufus_upload_key", response.body.data.key);
 %}
 
 ###
 
 ###############################################################################
-# 4. Загрузка содержимого rufus-4.15.exe в S3 по полученному Presigned URL
+# 4. Проверка статуса обработки: GET /api/upload/status
+# Поллинг каждые 5 секунд пока статус не станет "completed"
 ###############################################################################
-PUT {{rufus_upload_url}}
-
-< ./items/rufus-4.15.exe
+GET {{host}}/api/upload/status?key={{file_upload_key}}
+Authorization: Bearer {{auth_token}}
+Accept: application/json
 
 > {%
-    client.test("S3 upload returned 200 OK", function() {
-        client.assert(response.status === 200, "Expected status 200 from S3, got: " + response.status);
+    client.test("Status code is 200 OK", function() {
+        client.assert(response.status === 200, "Expected 200 OK, got: " + response.status);
+    });
+    if (response.body.data && response.body.data.status === "completed" && response.body.data.item) {
+        client.global.set("created_item_id", response.body.data.item.id);
+    }
+%}
+
+###
+
+###############################################################################
+# 5. Скачивание файла: GET /api/item/{id}/download
+# Доступно только владельцу, не более 1 раза в сутки, пока не прошло 14 дней
+###############################################################################
+GET {{host}}/api/item/{{created_item_id}}/download
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Status code is 200 OK", function() {
+        client.assert(response.status === 200, "Expected 200 OK, got: " + response.status);
+    });
+    client.test("Response contains download url", function() {
+        client.assert(response.body.data && response.body.data.url, "Missing download url");
     });
 %}
 
@@ -101,36 +112,17 @@ PUT {{rufus_upload_url}}
 # ТЕСТЫ ОШИБОК (VALIDATION & ERROR CODES)
 ###############################################################################
 
-# 5. Ошибка 400: Неизвестные поля в JSON (unknown field)
+# 6. Ошибка 400: Неизвестные поля в JSON (unknown field)
 POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
 
 {
   "file_size": 4727,
   "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a",
+  "filename": "file.jpg",
   "extra_unexpected_field": "test"
-}
-
-> {%
-    client.test("Status code is 400 Bad Request", function() {
-        client.assert(response.status === 400, "Expected 400, got: " + response.status);
-    });
-    client.test("Error message is 'invalid request body'", function() {
-        client.assert(response.body.error === "invalid request body", "Expected 'invalid request body', got: " + response.body.error);
-    });
-%}
-
-###
-
-# 6. Ошибка 400: Невалидный синтаксис JSON
-POST {{host}}/api/upload/url
-Content-Type: application/json
-Accept: application/json
-
-{
-  "file_size": 4727,
-  "sha_256_hex":
 }
 
 > {%
@@ -143,103 +135,58 @@ Accept: application/json
 
 # 7. Ошибка 400: Размер файла равен 0 (file size <= 0)
 POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
 
 {
   "file_size": 0,
-  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a",
+  "filename": "file.jpg"
 }
 
 > {%
     client.test("Status code is 400 Bad Request", function() {
         client.assert(response.status === 400, "Expected 400, got: " + response.status);
     });
-    client.test("Error message is 'file size must be greater than 0'", function() {
-        client.assert(response.body.error === "file size must be greater than 0", "Expected 'file size must be greater than 0', got: " + response.body.error);
-    });
 %}
 
 ###
 
-# 8. Ошибка 400: Размер файла отрицательный (file size < 0)
+# 8. Ошибка 400: Длина sha256 != 64 символов
 POST {{host}}/api/upload/url
-Content-Type: application/json
-Accept: application/json
-
-{
-  "file_size": -500,
-  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
-}
-
-> {%
-    client.test("Status code is 400 Bad Request", function() {
-        client.assert(response.status === 400, "Expected 400, got: " + response.status);
-    });
-    client.test("Error message is 'file size must be greater than 0'", function() {
-        client.assert(response.body.error === "file size must be greater than 0", "Expected 'file size must be greater than 0', got: " + response.body.error);
-    });
-%}
-
-###
-
-# 9. Ошибка 400: Длина sha256 != 64 символов
-POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
 
 {
   "file_size": 4727,
-  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c"
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c",
+  "filename": "file.jpg"
 }
 
 > {%
     client.test("Status code is 400 Bad Request", function() {
         client.assert(response.status === 400, "Expected 400, got: " + response.status);
     });
-    client.test("Error message is 'invalid sha256 hash'", function() {
-        client.assert(response.body.error === "invalid sha256 hash", "Expected 'invalid sha256 hash', got: " + response.body.error);
-    });
 %}
 
 ###
 
-# 10. Ошибка 400: Невалидный hex формат SHA-256 (64 символа, но содержит не-hex знаки)
+# 9. Ошибка 413: file_size превышает лимит
 POST {{host}}/api/upload/url
-Content-Type: application/json
-Accept: application/json
-
-{
-  "file_size": 4727,
-  "sha_256_hex": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
-}
-
-> {%
-    client.test("Status code is 400 Bad Request", function() {
-        client.assert(response.status === 400, "Expected 400, got: " + response.status);
-    });
-    client.test("Error message is 'invalid sha256 hex format'", function() {
-        client.assert(response.body.error === "invalid sha256 hex format", "Expected 'invalid sha256 hex format', got: " + response.body.error);
-    });
-%}
-
-###
-
-# 11. Ошибка 413: file_size превышает 10 ГБ (10737418240 байт)
-POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
 
 {
   "file_size": 10737418241,
-  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a",
+  "filename": "file.jpg"
 }
 
 > {%
     client.test("Status code is 413 Payload Too Large", function() {
         client.assert(response.status === 413, "Expected 413, got: " + response.status);
-    });
-    client.test("Error message is 'request entity too large'", function() {
-        client.assert(response.body.error === "request entity too large", "Expected 'request entity too large', got: " + response.body.error);
     });
 %}

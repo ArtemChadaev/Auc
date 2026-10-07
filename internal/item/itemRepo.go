@@ -22,12 +22,27 @@ func (r *Repo) withTx(tx storage.DBTX) *Repo {
 	return &Repo{db: tx}
 }
 
-func (r *Repo) create(ctx context.Context, uid uuid.UUID, key, hash string, iType itemType, metadata json.RawMessage) error {
-	_, err := r.db.Exec(ctx, "INSERT INTO items VALUES (default, $1, $1, $2, $3, $4, $5, default)", uid, key, hash, iType, metadata)
+func (r *Repo) createS3(ctx context.Context, id uuid.UUID, hash string) error {
+	_, err := r.db.Exec(ctx, "INSERT INTO s3 (id, hash) VALUES ($1, $2)", id, hash)
 	if err != nil {
-		return fmt.Errorf("itemRepo.create: %w", storage.ErrRepo(err))
+		return fmt.Errorf("itemRepo.createS3: %w", storage.ErrRepo(err))
 	}
 	return nil
+}
+
+func (r *Repo) createItem(ctx context.Context, uid uuid.UUID, s3ID uuid.UUID, iType itemType, metadata json.RawMessage) (Item, error) {
+	var item Item
+	row := r.db.QueryRow(ctx, `
+		INSERT INTO items (creator_id, owner_id, s3_id, type, metadata) 
+		VALUES ($1, $1, $2, $3, $4) 
+		RETURNING id, creator_id, owner_id, s3_id, type, metadata, created_at
+	`, uid, s3ID, iType, metadata)
+
+	err := row.Scan(&item.ID, &item.CreatorID, &item.OwnerID, &item.S3ID, &item.Type, &item.MetaData, &item.CreatedAt)
+	if err != nil {
+		return item, fmt.Errorf("itemRepo.createItem: %w", storage.ErrRepo(err))
+	}
+	return item, nil
 }
 
 func (r *Repo) getOwner(ctx context.Context, id int64) (uuid.UUID, error) {
@@ -78,14 +93,6 @@ func (r *Repo) delete(ctx context.Context, id int64) error {
 	_, err := r.db.Exec(ctx, "DELETE FROM items WHERE id = $1", id)
 	if err != nil {
 		return fmt.Errorf("itemRepo.delete: %w", storage.ErrRepo(err))
-	}
-	return nil
-}
-
-func (r *Repo) createS3(ctx context.Context, id uuid.UUID, hash string) error {
-	_, err := r.db.Exec(ctx, "INSERT INTO s3 (id, hash) VALUES ($1, $2)", id, hash)
-	if err != nil {
-		return fmt.Errorf("itemRepo.createS3: %w", storage.ErrRepo(err))
 	}
 	return nil
 }

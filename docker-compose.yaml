@@ -16,6 +16,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
   caddy:
     image: caddy:alpine
     restart: unless-stopped
@@ -31,6 +41,8 @@ services:
       - DEPLOY=true
     depends_on:
       postgres:
+        condition: service_healthy
+      valkey:
         condition: service_healthy
     env_file:
       - .env

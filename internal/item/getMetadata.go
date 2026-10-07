@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"image"
 	"io"
@@ -22,6 +24,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/vansante/go-ffprobe.v2"
 )
+
+//TODO ERROR Переделать полностью
 
 // TODO: Весь этот файл кроме Image сгенерирован (ао отдельности). Требуется полные тесты
 // TODO: Потом на фронте подумать как выводить все (может сохранять обложку видео или аудио, первую страницу доков (или темы))
@@ -361,4 +365,73 @@ func getVideoMetadata(ctx context.Context, header headerMetadata, r io.Reader) (
 	}, nil
 }
 
-//TODO: Создание первью идет одновременно со всем, но его загрузка уже просто в целом виде
+// createItemMetadata генерирует JSON метаданных в зависимости от типа файла
+func createItemMetadata(ctx context.Context, iType itemType, mType string, hmData headerMetadata, pr *io.PipeReader) (json.RawMessage, error) {
+	var metadata json.RawMessage
+	switch iType {
+	case Image:
+		image, err := getImageMetadata(ctx, hmData, mType, pr)
+		if err != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", err)
+		}
+		var errM error
+		metadata, errM = json.Marshal(image)
+		if errM != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", apperr.NewAppError(errM, 4))
+		}
+	case Model3D:
+		model3D, err := getModel3DMetadata(ctx, hmData, pr)
+		if err != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", err)
+		}
+		var errM error
+		metadata, errM = json.Marshal(model3D)
+		if errM != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", apperr.NewAppError(errM, 4))
+		}
+	case Audio:
+		audio, err := getAudioMetadata(ctx, hmData, pr)
+		if err != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", err)
+		}
+		var errM error
+		metadata, errM = json.Marshal(audio)
+		if errM != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", apperr.NewAppError(errM, 4))
+		}
+	case Video:
+		video, err := getVideoMetadata(ctx, hmData, pr)
+		if err != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", err)
+		}
+		var errM error
+		metadata, errM = json.Marshal(video)
+		if errM != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", apperr.NewAppError(errM, 4))
+		}
+	case Document:
+		doc, err := getDocumentMetadata(ctx, hmData, mType, pr)
+		if err != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", apperr.NewAppError(err, 4))
+		}
+		var errM error
+		metadata, errM = json.Marshal(doc)
+		if errM != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", apperr.NewAppError(errM, 4))
+		}
+	case Archive:
+		archive, err := getArchiveMetadata(ctx, hmData, pr)
+		if err != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", err)
+		}
+		var errM error
+		metadata, errM = json.Marshal(archive)
+		if errM != nil {
+			return nil, fmt.Errorf("item.createItemMetadata: %w", apperr.NewAppError(errM, 4))
+		}
+	default:
+		return nil, errors.New("unsupported item type")
+	}
+	_, _ = io.Copy(io.Discard, pr)
+	return metadata, nil
+}

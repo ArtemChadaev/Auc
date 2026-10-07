@@ -13,6 +13,7 @@ import (
 	"github.com/ArtemChadaev/Auction/cmd/httpx/middleware"
 	"github.com/ArtemChadaev/Auction/cmd/logger"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
+	"github.com/ArtemChadaev/Auction/cmd/valkey"
 	"github.com/ArtemChadaev/Auction/internal/item"
 	"github.com/ArtemChadaev/Auction/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,7 +24,7 @@ func main() {
 	// logger
 	logger.Init()
 	if err := cfg.Init(); err != nil {
-		slog.Error("main.config", err)
+		slog.Error("main.config", "error", err)
 		return
 	}
 
@@ -34,11 +35,11 @@ func main() {
 	// db
 	pool, err := pgxpool.New(context.Background(), "postgresql://test:password@"+cfg.Cfg.HostDB+":5432/db")
 	if err != nil {
-		slog.Error("main.db", err)
+		slog.Error("main.db", "error", err)
 		return
 	}
 	if err = pool.Ping(ctx); err != nil {
-		slog.Error("main.db", err)
+		slog.Error("main.db", "error", err)
 		return
 	}
 	defer pool.Close()
@@ -51,6 +52,21 @@ func main() {
 		SecretKey: cfg.Cfg.SecretKey,
 		Bucket:    cfg.Cfg.Bucket,
 	})
+	if err != nil {
+		slog.Error("main.s3", "error", err)
+		return
+	}
+
+	// valkey
+	valkeyClient, err := valkey.NewClient(ctx, valkey.Config{
+		Host: cfg.Cfg.HostValkey,
+		Port: cfg.Cfg.PortValkey,
+	})
+	if err != nil {
+		slog.Error("main.valkey", "error", err)
+		return
+	}
+	defer valkeyClient.Close()
 
 	// http
 	mux := http.NewServeMux()
@@ -62,10 +78,12 @@ func main() {
 	mux.Handle("/api/auth/", http.StripPrefix("/api/auth", userHandler.RoutesAuth(authChain)))
 	mux.Handle("/api/user/", http.StripPrefix("/api/user", authChain.Then(userHandler.RoutesUser())))
 
-	itemHandler := item.NewHandler(item.NewService(pool, s3, item.NewRepo(pool)))
-	mux.Handle("/api/upload/", http.StripPrefix("/api/upload", itemHandler.RouterUpload()))
+	itemService := item.NewService(pool, s3, item.NewRepo(pool), valkeyClient)
+	go itemService.RecoverPendingUploads(ctx)
+	itemHandler := item.NewHandler(itemService)
+	mux.Handle("/api/upload/", http.StripPrefix("/api/upload", authChain.Then(itemHandler.RouterUpload())))
+	mux.Handle("/api/item/", http.StripPrefix("/api/item", authChain.Then(itemHandler.RouterItem())))
 
-	// М.б добавть сначала globalChain а потом все очень странные роутеры (по типу upload, -> отдельно)
 	srv := &http.Server{
 		Addr:              ":8080",
 		Handler:           globalChain.Then(mux),

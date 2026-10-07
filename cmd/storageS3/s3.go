@@ -78,6 +78,50 @@ func (c *Client) Download(ctx context.Context, key string) (io.ReadCloser, error
 	return result.Body, nil
 }
 
+func (c *Client) DownloadRange(ctx context.Context, key string, start, end int64) (io.ReadCloser, error) {
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", start, end)
+	result, err := c.s3Client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+		Range:  aws.String(rangeHeader),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to download range: %w", apperr.NewAppError(err, 4))
+	}
+	return result.Body, nil
+}
+
+func (c *Client) Head(ctx context.Context, key string) (int64, error) {
+	result, err := c.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to head object: %w", apperr.NewAppError(err, 4))
+	}
+	if result.ContentLength == nil {
+		return 0, nil
+	}
+	return *result.ContentLength, nil
+}
+
+func (c *Client) Move(ctx context.Context, srcKey, dstKey string) error {
+	copySource := url.PathEscape(c.bucket + "/" + srcKey)
+	_, err := c.s3Client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(c.bucket),
+		Key:        aws.String(dstKey),
+		CopySource: aws.String(copySource),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to copy object: %w", apperr.NewAppError(err, 4))
+	}
+
+	if err = c.Delete(ctx, srcKey); err != nil {
+		return fmt.Errorf("failed to delete source object after copy: %w", err)
+	}
+	return nil
+}
+
 func (c *Client) Delete(ctx context.Context, key string) error {
 	_, err := c.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(c.bucket),
@@ -90,8 +134,6 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 }
 
 // Exists проверяет, существует ли уже объект в бакете S3.
-// Полезно вызывать перед генерацией URL, передавая хеш файла:
-// если файл уже есть, загружать его повторно не нужно (дедупликация).
 func (c *Client) Exists(ctx context.Context, key string) (bool, error) {
 	_, err := c.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(c.bucket),
@@ -141,11 +183,6 @@ func (c *Client) GetURLForUpload(
 
 	presignClient := s3.NewPresignClient(c.s3Client)
 
-	// ВАЖНО: В PutObjectInput передаем только Bucket и Key.
-	// Если включить ChecksumSHA256 или ContentLength, AWS SDK добавит их в X-Amz-SignedHeaders.
-	// Supabase S3 Gateway и сторонние клиенты (браузер fetch, JetBrains HTTP Client)
-	// не поддерживают x-amz-checksum-* в SigV4 или блокируют заголовок Content-Length,
-	// что приводит к ошибке 403 SignatureDoesNotMatch.
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String("tmp/" + key.String()),

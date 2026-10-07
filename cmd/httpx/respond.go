@@ -26,9 +26,12 @@ var (
 	ErrRespInvalidReqBody    = Response{Code: http.StatusBadRequest, Error: "invalid request body"}
 	ErrRespReqEntityTooLarge = Response{Code: http.StatusRequestEntityTooLarge, Error: "request entity too large"}
 
-	// Upload
-	ErrRespHashAlreadyExists = Response{Code: http.StatusConflict, Error: "hash already exists"}
-	ErrRespFileAlreadyExists = Response{Code: http.StatusConflict, Error: "file already exists"}
+	// Upload & Items
+	ErrRespHashAlreadyExists    = Response{Code: http.StatusConflict, Error: "hash already exists"}
+	ErrRespFileAlreadyExists    = Response{Code: http.StatusConflict, Error: "file already exists"}
+	ErrRespUserAlreadyUploading = Response{Code: http.StatusConflict, Error: "user already has an active upload"}
+	ErrRespFileExpired          = Response{Code: http.StatusGone, Error: "file has expired"}
+	ErrRespDownloadLimit        = Response{Code: http.StatusTooManyRequests, Error: "download limit reached: only 1 download per day allowed"}
 )
 
 // DecodeJSON декодирует и обрезает пробелы слева/справа. Сам отправляет ошибку клиенту

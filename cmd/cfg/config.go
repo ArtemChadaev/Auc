@@ -7,6 +7,8 @@ import (
 type config struct {
 	Deploy              bool   `env:"DEPLOY,required,notEmpty"`
 	HostDB              string `env:"HOST_DB" envDefault:"localhost"`
+	HostValkey          string `env:"HOST_VALKEY" envDefault:"localhost"`
+	PortValkey          string `env:"PORT_VALKEY" envDefault:"6379"`
 	JwtSecret           string `env:"JWT_SECRET,required,notEmpty"`
 	ExpiredRefreshToken int64  `env:"EXPIRED_REFRESH_TOKEN" envDefault:"14"` // в днях
 	ExpiredAccessToken  int64  `env:"EXPIRED_ACCESS_TOKEN" envDefault:"15"`  // в минутах

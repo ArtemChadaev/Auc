@@ -2,34 +2,21 @@ package item
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"hash"
-	_ "image/jpeg"
-	_ "image/png"
-	"io"
-	"log/slog"
-	"strings"
-	"time"
 	"uuid"
-
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/tiff"
-	_ "golang.org/x/image/webp"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
+	"github.com/ArtemChadaev/Auction/cmd/valkey"
 	"github.com/ArtemChadaev/Auction/internal/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type repo interface {
 	withTx(tx storage.DBTX) *Repo
-	create(ctx context.Context, uid uuid.UUID, key, hash string, iType itemType, metadata json.RawMessage) error
+	createS3(ctx context.Context, id uuid.UUID, hash string) error
+	createItem(ctx context.Context, uid uuid.UUID, s3ID uuid.UUID, iType itemType, metadata json.RawMessage) (Item, error)
 	getOwner(ctx context.Context, id int64) (uuid.UUID, error)
 	getOwnerForUpdate(ctx context.Context, id int64) (uuid.UUID, error)
 	newOwner(ctx context.Context, uid uuid.UUID, id int64) error
@@ -43,181 +30,37 @@ type repo interface {
 }
 
 type Service struct {
-	pool *pgxpool.Pool
-	s3   *storageS3.Client
-	repo repo
+	pool      *pgxpool.Pool
+	s3        *storageS3.Client
+	repo      repo
+	valkey    *valkey.Client
+	uploadSem chan struct{}
 }
 
-func NewService(pool *pgxpool.Pool, s3 *storageS3.Client, repo repo) *Service {
+func NewService(pool *pgxpool.Pool, s3 *storageS3.Client, repo repo, valkeyClient *valkey.Client) *Service {
 	return &Service{
-		pool: pool,
-		s3:   s3,
-		repo: repo,
+		pool:      pool,
+		s3:        s3,
+		repo:      repo,
+		valkey:    valkeyClient,
+		uploadSem: make(chan struct{}, 5), // N = 5 параллельных задач
 	}
 }
 
-func createHash(ctx context.Context, r io.Reader) (hash.Hash, error) {
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, r); err != nil {
-		apperr.Log(ctx, "Failed to copy file to hasher", err)
-		return nil, fmt.Errorf("item.createHash: %w", apperr.NewAppError(err, -4))
-	}
-	return hasher, nil
-}
-
-// Так Надо сделать генерацию хеша и отправку в s3 одновременным всегда (обертку над 2 функциями), а остальное по отдельности
-// create TODO: Надо чтобы видео/аудио давало только 1 минуту (если меньше то половину длины), изображение только неполное разрешение м.б. с чем то поверх
-func (s *Service) create(ctx context.Context, iType itemType, mType string, hmData headerMetadata, file io.Reader, uid uuid.UUID) error {
-	// Создаём контекст для отмене при ошибке
-	ctxWithCause, cancel := context.WithTimeoutCause(ctx, time.Minute*10, apperr.ErrTimeout)
-	defer cancel()
-	g, gCtx := errgroup.WithContext(ctxWithCause)
-
-	// Делаем 2 дополнительных чтеца для хеша и metadata, главный s3
-	prHash, pwHash := io.Pipe()
-	prMData, pwMData := io.Pipe()
-	tee := io.TeeReader(file, io.MultiWriter(pwMData, pwHash))
-
-	// Пишется err error для defer (Правильно закрытие при любом выходе из функции, с или без ошибки)
-	// Функция создания хеша файла (ля проверки копий, если был -> ошибка только 1 уникальный файл)
-	hasher := sha256.New()
-	g.Go(func() (err error) {
-		defer func() {
-			_ = prMData.CloseWithError(err)
-		}()
-
-		if _, err = io.Copy(hasher, prHash); err != nil {
-			slog.DebugContext(gCtx, "Failed to copy file to hasher", slog.Any("error", err))
-			if err != nil {
-				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, -4))
-			}
-		}
-		return
-	})
-
-	var metadata json.RawMessage
-	// Функция создания metadata
-	g.Go(func() (err error) {
-		defer func() {
-			_ = prMData.CloseWithError(err)
-		}()
-		switch iType {
-		case Image:
-			image, err := getImageMetadata(gCtx, hmData, mType, prMData)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", err)
-			}
-			metadata, err = json.Marshal(image)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
-			}
-			break
-		case Model3D:
-			model3D, err := getModel3DMetadata(gCtx, hmData, prMData)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", err)
-			}
-			metadata, err = json.Marshal(model3D)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
-			}
-			break
-		case Audio:
-			audio, err := getAudioMetadata(gCtx, hmData, prMData)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", err)
-			}
-			metadata, err = json.Marshal(audio)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
-			}
-			break
-		case Video:
-			video, err := getVideoMetadata(gCtx, hmData, prMData)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", err)
-			}
-			metadata, err = json.Marshal(video)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
-			}
-			break
-		case Document:
-			doc, err := getDocumentMetadata(gCtx, hmData, mType, prMData)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
-			}
-			metadata, err = json.Marshal(doc)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
-			}
-			break
-		case Archive:
-			archive, err := getArchiveMetadata(gCtx, hmData, prMData)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", err)
-			}
-			metadata, err = json.Marshal(archive)
-			if err != nil {
-				return fmt.Errorf("item.create: %w", apperr.NewAppError(err, 4))
-			}
-			break
-		default:
-			return errors.New("not an image")
-		}
-		_, _ = io.Copy(io.Discard, prMData)
-		return
-	})
-
-	// S3
-	key := uuid.NewV7().String()
-	g.Go(func() error {
-		defer func() {
-			_ = pwHash.CloseWithError(context.Cause(gCtx))
-			_ = pwMData.CloseWithError(context.Cause(gCtx))
-		}()
-		if err := s.s3.Upload(gCtx, key, tee, mType); err != nil {
-			cancel()
-			return err
-		}
-		return nil
-	})
-
-	if err := g.Wait(); err != nil {
-		return err
-	}
-
-	hashString := hex.EncodeToString(hasher.Sum(nil))
-	if has, err := s.repo.hasHash(ctx, hashString); has {
-		if err != nil {
-			return fmt.Errorf("item.create: %w", err)
-		}
-		//TODO: Сделать функцию удаление из s3 по key и отдельно функцию вывод тогда данных для нахождения предмета у другого пользователя (id хз)
-	}
-
-	if err := s.repo.create(ctx, uid, key, hashString, iType, metadata); err != nil {
-		//TODO: функцию удаления из s3 тогда
-		return fmt.Errorf("item.create: %w", err)
-	}
-
-	return nil
-}
-
-// Публичные
+// getItem получение предмета по ID
 func (s *Service) getItem(ctx context.Context, id int64) (Item, error) {
 	item, err := s.repo.getItem(ctx, id)
 	if err != nil {
-		return Item{}, fmt.Errorf("item.get: %w", err)
+		return Item{}, fmt.Errorf("itemService.getItem: %w", err)
 	}
 	return item, nil
 }
 
-// только для пользователей
-// Не экспортировать, общая для обёрток,
+// newOwner смена владельца
 func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID int64, lotID *int64, description *string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("item.newOwner: %w", err)
+		return fmt.Errorf("itemService.newOwner: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -225,46 +68,39 @@ func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID 
 
 	oldOwner, err := txRepo.getOwnerForUpdate(ctx, itemID)
 	if err != nil {
-		return fmt.Errorf("item.newOwner: %w", err)
+		return fmt.Errorf("itemService.newOwner: %w", err)
 	}
 	if oldOwner != uid {
-		return fmt.Errorf("item.newOwner: %w", apperr.ErrForbidden)
+		return fmt.Errorf("itemService.newOwner: %w", apperr.ErrForbidden)
 	}
 
 	err = txRepo.newOwner(ctx, newOwner, itemID)
 	if err != nil {
-		return fmt.Errorf("item.newOwner: %w", err)
+		return fmt.Errorf("itemService.newOwner: %w", err)
 	}
 
 	err = txRepo.newHistory(ctx, itemID, oldOwner, newOwner, lotID, description)
 	if err != nil {
-		return fmt.Errorf("item.newOwner: %w", err)
+		return fmt.Errorf("itemService.newOwner: %w", err)
 	}
 
 	if err = tx.Commit(ctx); err != nil {
-		return fmt.Errorf("item.newOwner: %w", apperr.NewAppError(err, 8))
+		return fmt.Errorf("itemService.newOwner: %w", apperr.NewAppError(err, 8))
 	}
 	return nil
 }
 
-// Для передачи в этом пакете
+// giftItem передача предмета в подарок
 func (s *Service) giftItem(ctx context.Context, uid, newOwner uuid.UUID, itemID int64, description string) error {
 	return s.newOwner(ctx, uid, newOwner, itemID, nil, &description)
 }
 
-// NewOwnerWhoWinLot Для экспорта в пакете lot
+// NewOwnerWhoWinLot для экспорта в пакете lot
 func (s *Service) NewOwnerWhoWinLot(ctx context.Context, uid, newOwner uuid.UUID, itemID, lotID int64) error {
 	return s.newOwner(ctx, uid, newOwner, itemID, &lotID, nil)
 }
 
+// hasHash проверка наличия хеша в БД
 func (s *Service) hasHash(ctx context.Context, hash string) (bool, error) {
-	return s.repo.hasHash(ctx, strings.ToLower(hash))
-}
-
-func (s *Service) createURLForUpload(ctx context.Context, uuid4 uuid.UUID, fileSize int64) (string, error) {
-	url, err := s.s3.GetURLForUpload(ctx, uuid4, fileSize)
-	if err != nil {
-		return "", fmt.Errorf("itemService.createURLForUpload: %w", err)
-	}
-	return url, nil
+	return s.repo.hasHash(ctx, hash)
 }
