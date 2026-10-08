@@ -1,0 +1,847 @@
+# ==============================================================================
+# BLACK-BOX NEGATIVE & BOUNDARY TEST SUITE: ITEM / S3 UPLOAD API
+# Цель: Проверка устойчивости API и интеграции с S3 к некорректным данным,
+# нарушению протокола, подмене хэшей/размеров, IDOR и манипуляциям с состоянием.
+# ==============================================================================
+
+# ==============================================================================
+# РАЗДЕЛ 1. ВАЛИДАЦИЯ ПАРАМЕТРОВ РАЗМЕРА ФАЙЛА (POST /api/upload/url)
+# ==============================================================================
+
+### 1.1 Отрицательный размер файла (-1 байт)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "negative_size.jpg",
+  "file_size": -1,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject negative file size (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 1.2 Нулевой размер файла (0 байт - пустой файл)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "empty_file.jpg",
+  "file_size": 0,
+  "sha_256_hex": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}
+
+> {%
+    client.test("Reject zero size file (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 1.3 Аномально огромный размер (Integer Overflow / DoS попытка: ~1 Петабайт)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "overflow.jpg",
+  "file_size": 999999999999999999,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject huge file size (400/413/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 1.4 Несовпадение типов: размер файла передан как строка вместо числа
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "string_size.jpg",
+  "file_size": "4727",
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject string in file_size (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 1.5 Несовпадение типов: дробный размер файла (float)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "float_size.jpg",
+  "file_size": 4727.5,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject float file_size (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 1.6 Значение file_size = null
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "null_size.jpg",
+  "file_size": null,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject null file_size (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 2.1 Пустое имя файла
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject empty filename (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 2.2 Path Traversal (Попытка выхода из директории бакета / хоста)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "../../../../../etc/passwd",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject path traversal in filename (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 2.3 Windows-style Path Traversal и спецсимволы
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "..\\..\\..\\windows\\system32\\cmd.exe",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject Windows traversal (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 2.4 Зарезервированные имена устройств Windows (CON, NUL, AUX, PRN)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "CON.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Handle/Reject reserved device name (400/422)", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500 при CON.jpg");
+    });
+%}
+
+### 2.5 Опасные расширения (исполняемые файлы: .exe, .sh, .php)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "malware.exe",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Check executable upload policy", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать");
+    });
+%}
+
+### 2.6 Null Byte Injection в имени файла (%00 / \u0000)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "test\u0000.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject null byte in filename (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx");
+    });
+%}
+
+### 2.7 XSS Payload в имени файла
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "<svg onload=alert('xss')>.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject/Sanitize XSS filename", () => {
+        client.assert(response.status !== 500, "Не должно приводить к 500");
+    });
+%}
+
+### 2.8 SQL Injection в имени файла
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "test'; DROP TABLE items;--.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject SQLi in filename without 500", () => {
+        client.assert(response.status !== 500, "БД не должна падать с 500");
+    });
+%}
+
+### 2.9 Гигантское имя файла (Buffer Overflow / DoS: 5000 символов)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "very_long_name_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject or handle oversized filename", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать при длинном имени");
+    });
+%}
+
+### 3.1 Пустой хэш
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "file.jpg",
+  "file_size": 4727,
+  "sha_256_hex": ""
+}
+
+> {%
+    client.test("Reject empty sha_256_hex (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx");
+    });
+%}
+
+### 3.2 Некорректная длина хэша (слишком короткий)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "file.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f1"
+}
+
+> {%
+    client.test("Reject short sha_256_hex (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx");
+    });
+%}
+
+### 3.3 Некорректные символы в hex (64 символа, но присутствуют не-hex буквы: 'z', 'q')
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "file.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+}
+
+> {%
+    client.test("Reject non-hex sha_256_hex (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx");
+    });
+%}
+
+### 3.4 Несовпадение типов: sha_256_hex передан числом
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "file.jpg",
+  "file_size": 4727,
+  "sha_256_hex": 1234567890
+}
+
+> {%
+    client.test("Reject integer sha_256_hex (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx");
+    });
+%}
+
+### 4.1 Пустой JSON объект {}
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{}
+
+> {%
+    client.test("Reject empty json body (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx");
+    });
+%}
+
+### 4.2 Пропущены обязательные поля (отсутствует sha_256_hex)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "file.jpg",
+  "file_size": 4727
+}
+
+> {%
+    client.test("Reject missing required field (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx");
+    });
+%}
+
+### 4.3 Попытка Mass Assignment (неожиданные поля: is_admin, price, id)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "file.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a",
+  "role": "admin",
+  "is_admin": true,
+  "price": 0.00
+}
+
+> {%
+    client.test("Check mass assignment / unknown fields", () => {
+        client.assert(response.status === 200 || response.status === 400, "Сервер должен либо проигнорировать, либо отклонить с 400");
+    });
+%}
+
+### 4.4 Запрос БЕЗ токена авторизации
+POST {{host}}/api/upload/url
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "file.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject unauthorized request (401)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized, получен: " + response.status);
+    });
+%}
+
+### 4.5 Запрос с испорченным / поддельным токеном
+POST {{host}}/api/upload/url
+Authorization: Bearer fake_forged_token_eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.fake
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "file.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.test("Reject fake token (401)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized, получен: " + response.status);
+    });
+%}
+
+### 5.1 ПОДГОТОВКА СЦЕНАРИЯ: Получаем валидный Presigned URL для проверки несовпадений
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "attack_test.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.global.set("s3_test_url", response.body.data.url);
+    client.global.set("s3_test_key", response.body.data.key);
+    client.test("Got presigned URL for S3 attack suite", () => {
+        client.assert(response.status === 200, "URL получен успешно");
+    });
+%}
+
+### 5.2 S3 АТАКА: Подмена размера файла в меньшую сторону (Загружаем 0 байт вместо 4727)
+### Если S3 Presigned URL подписан с Content-Length или сервер проверяет размер, загрузка должна упасть
+PUT {{s3_test_url}}
+
+< ../items/empty.bin
+
+> {%
+    client.test("S3 empty file response", () => {
+        client.log("S3 Response Code on empty upload: " + response.status);
+    });
+%}
+
+### 5.3 S3 АТАКА: Подмена размера в большую сторону (Загружаем ~2MB вместо 4727 байт)
+### Проверяет, защищен ли Presigned URL от переполнения квоты S3
+PUT {{s3_test_url}}
+
+< ../items/rufus-4.15.exe
+
+> {%
+    client.test("S3 oversized upload response", () => {
+        client.log("S3 Response Code on oversized upload: " + response.status);
+    });
+%}
+
+### 5.4 S3 АТАКА: Попытка выполнить неразрешенный HTTP метод к Presigned URL (DELETE вместо PUT)
+DELETE {{s3_test_url}}
+
+> {%
+    client.test("S3 reject unauthorized DELETE method", () => {
+        client.assert(response.status === 403 || response.status === 405, "S3 должен запретить DELETE (403/405), получен: " + response.status);
+    });
+%}
+
+### 5.5 S3 АТАКА: Попытка выполнить POST к Presigned URL
+POST {{s3_test_url}}
+Content-Type: application/octet-stream
+
+< ../items/file.jpg
+
+> {%
+    client.test("S3 reject POST to PUT-only presigned URL", () => {
+        client.assert(response.status === 403 || response.status === 405, "S3 должен запретить POST (403/405), получен: " + response.status);
+    });
+%}
+
+### 6.1 ФАНТОМНОЕ ПОДТВЕРЖДЕНИЕ (Ghost Confirm):
+### Запрашиваем URL, НИЧЕГО НЕ ЗАГРУЖАЕМ В S3, и сразу жмем Confirm!
+### Проверка: проверяет ли бэкенд факт наличия объекта в S3 через HeadObject перед принятием?
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "ghost.jpg",
+  "file_size": 4727,
+  "sha_256_hex": "6ec3e443ba2ca8f12cabf1a7f8e6820c8d5b95f13dca636b0ae39d63ae21d25a"
+}
+
+> {%
+    client.global.set("ghost_key", response.body.data.key);
+%}
+
+### 6.2 Вызов Confirm для незагруженного файла +++ долго думал и вывел 500, а не 4xx
+POST {{host}}/api/upload/confirm
+Authorization: Bearer {{auth_token}}
+X-Upload-Key: {{ghost_key}}
+Accept: application/json
+
+> {%
+    client.test("Reject or fail confirm if file was never uploaded to S3", () => {
+        client.log("Confirm status for non-uploaded S3 file: " + response.status);
+        // Если вернул 202, проверяем статус в следующем запросе (он должен стать failed или error)
+    });
+%}
+
+### 6.3 Проверка статуса фантомного файла +++ 200 ответил, и вернул пустоту, хотя должна быть ошибка 4xx, не критично но всё же
+GET {{host}}/api/upload/status?key={{ghost_key}}
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Ghost upload must fail or report missing file", () => {
+        let status = response.body ? response.body.status : "";
+        client.assert(status !== "completed", "Фантомный файл НЕ должен переходить в статус completed!");
+    });
+%}
+
+### 6.4 Confirm БЕЗ заголовка X-Upload-Key
+POST {{host}}/api/upload/confirm
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject confirm missing X-Upload-Key (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 6.5 Confirm с пустым заголовком X-Upload-Key
+POST {{host}}/api/upload/confirm
+Authorization: Bearer {{auth_token}}
+X-Upload-Key: 
+Accept: application/json
+
+> {%
+    client.test("Reject empty X-Upload-Key (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx");
+    });
+%}
+
+### 6.6 Confirm с несуществующим UUID ключом
+POST {{host}}/api/upload/confirm
+Authorization: Bearer {{auth_token}}
+X-Upload-Key: 00000000-0000-0000-0000-000000000000
+Accept: application/json
+
+> {%
+    client.test("Reject non-existent key in confirm (404/400)", () => {
+        client.assert(response.status === 404 || response.status === 400, "Ожидался статус 404/400, получен: " + response.status);
+    });
+%}
+
+### 6.7 SQL Injection в заголовке X-Upload-Key
+POST {{host}}/api/upload/confirm
+Authorization: Bearer {{auth_token}}
+X-Upload-Key: ' OR '1'='1
+Accept: application/json
+
+> {%
+    client.test("Reject SQLi in X-Upload-Key header without 500", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500");
+    });
+%}
+
+### 6.8 Path Traversal в заголовке X-Upload-Key
+POST {{host}}/api/upload/confirm
+Authorization: Bearer {{auth_token}}
+X-Upload-Key: ../../../../../etc/shadow
+Accept: application/json
+
+> {%
+    client.test("Reject Path Traversal in X-Upload-Key without 500", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500");
+    });
+%}
+
+### 6.9 Double Confirm (Replay Attack): повторный вызов confirm для одного и того же ключа +++ В течении некоторого времени минут 5-час должно давать одинаковый ответ 202, а не 1 раз
+POST {{host}}/api/upload/confirm
+Authorization: Bearer {{auth_token}}
+X-Upload-Key: {{upload_key}}
+Accept: application/json
+
+> {%
+    client.test("Check idempotency on second confirm call", () => {
+        client.log("Second confirm status: " + response.status);
+        client.assert(response.status !== 500, "Сервер не должен падать при повторном confirm");
+    });
+%}
+
+### 6.10 Confirm БЕЗ токена авторизации
+POST {{host}}/api/upload/confirm
+X-Upload-Key: {{upload_key}}
+Accept: application/json
+
+> {%
+    client.test("Reject unauthorized confirm (401)", () => {
+        client.assert(response.status === 401, "Ожидался 401 Unauthorized");
+    });
+%}
+
+### 7.1 Запрос статуса без параметра key
+GET {{host}}/api/upload/status
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject status query without key parameter (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидался 4xx, получен: " + response.status);
+    });
+%}
+
+### 7.2 Запрос статуса с пустым параметром key (?key=)
+GET {{host}}/api/upload/status?key=
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject status query with empty key (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидался 4xx");
+    });
+%}
+
+### 7.3 Запрос статуса с несуществующим ключом
+GET {{host}}/api/upload/status?key=deadbeef-0000-0000-0000-000000000000
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Handle non-existent status key (404/400)", () => {
+        client.assert(response.status === 404 || response.status === 400, "Ожидался 404/400, получен: " + response.status);
+    });
+%}
+
+### 7.4 SQL Injection в параметре key
+GET {{host}}/api/upload/status?key=' UNION SELECT NULL--
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject SQLi in status query key without 500", () => {
+        client.assert(response.status !== 500, "Сервер не должен выдавать 500");
+    });
+%}
+
+### 7.5 Проверка статуса БЕЗ токена авторизации
+GET {{host}}/api/upload/status?key={{upload_key}}
+Accept: application/json
+
+> {%
+    client.test("Reject status query without auth (401)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401");
+    });
+%}
+
+### 8.1 Скачивание несуществующего item_id
+GET {{host}}/api/item/999999999999/download
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Return 404 on non-existent item_id", () => {
+        client.assert(response.status === 404, "Ожидался 404 Not Found, получен: " + response.status);
+    });
+%}
+
+### 8.2 Нулевой item_id
+GET {{host}}/api/item/0/download
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Return 400/404 on item_id=0", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался 400 или 404");
+    });
+%}
+
+### 8.3 Отрицательный item_id
+GET {{host}}/api/item/-1/download
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Return 400/404 on negative item_id", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался 400 или 404");
+    });
+%}
+
+### 8.4 Строковый / Невалидный item_id (Type Confusion)
+GET {{host}}/api/item/undefined/download
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Return 400/404 on non-numeric item_id", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался 400/404");
+    });
+%}
+
+### 8.5 Path Traversal в URL скачивания
+GET {{host}}/api/item/../../../../etc/passwd/download
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject path traversal in item download URL", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался 400/404");
+    });
+%}
+
+### 8.6 SQL Injection в item_id
+GET {{host}}/api/item/1' OR '1'='1/download
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject SQLi in item download without 500", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500");
+    });
+%}
+
+### 8.7 Попытка скачивания БЕЗ токена авторизации (Проверка публичной утечки)
+GET {{host}}/api/item/{{item_id}}/download
+Accept: application/json
+
+> {%
+    client.test("Reject download without token (401)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized");
+    });
+%}
+
+### 9.1 Отмена без токена авторизации
+POST {{host}}/api/upload/cancel
+
+> {%
+    client.test("Reject cancel without token (401)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401");
+    });
+%}
+
+### 9.2 Отмена с несуществующим X-Upload-Key
+POST {{host}}/api/upload/cancel
+Authorization: Bearer {{auth_token}}
+X-Upload-Key: non-existent-cancel-key
+
+> {%
+    client.test("Handle non-existent key on cancel without 500", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500");
+    });
+%}
+
+### 9.3 Повторная отмена уже отмененной операции
+POST {{host}}/api/upload/cancel
+Authorization: Bearer {{auth_token}}
+X-Upload-Key: non-existent-cancel-key
+
+> {%
+    client.test("Check cancel idempotency without 500", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500");
+    });
+%}
+
+### 10.1 Шаг 1: Запрашиваем URL, объявляя один хэш и размер (например, валидные)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "smallCopy.jpg",
+  "file_size": 204800,
+  "sha_256_hex": "3d287892faf22b60eb18a99b7967f113bbf6534f4b8c947063d010d280814807"
+}
+
+> {%
+    client.global.set("poison_url", response.body.data.url);
+    client.global.set("poison_key", response.body.data.key);
+    client.test("Poison URL acquired", () => {
+        client.assert(response.status === 200, "URL получен");
+    });
+%}
+
+### 10.2 Шаг 2: Загружаем в S3 совершенно другой бинарный файл (подмена содержимого)
+PUT {{poison_url}}
+
+< ../items/fileCopy.jpg
+
+> {%
+    client.test("Poison content uploaded to S3", () => {
+        client.log("S3 PUT status: " + response.status);
+    });
+%}
+
+### 10.3 Шаг 3: Подтверждаем загрузку
+POST {{host}}/api/upload/confirm
+Authorization: Bearer {{auth_token}}
+X-Upload-Key: {{poison_key}}
+Accept: application/json
+
+> {%
+    client.test("Poison upload confirm accepted by gateway", () => {
+        client.log("Confirm status: " + response.status);
+    });
+%}
+
+### 10.4 Шаг 4: Проверяем статус обработки
+### Фоновый воркер/сервер ОБЯЗАН обнаружить несовпадение хэша и перевести статус в error/failed!
+GET {{host}}/api/upload/status?key={{poison_key}}
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Background processor must detect hash mismatch and FAIL", () => {
+        let status = response.body ? response.body.status : "";
+        client.log("Poison processing status: " + status);
+        client.assert(status !== "completed", "КРИТИЧЕСКИЙ БАГ: Сервер пометил файл с неверным хэшем как completed!");
+    });
+%}

@@ -8,23 +8,26 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
+	"github.com/ArtemChadaev/Auction/cmd/storageS3"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/errgroup"
 )
 
 var (
-	ErrUserAlreadyUploading = apperr.NewAppErrorString("user already has an active upload", -4)
-	ErrUploadNotFound       = apperr.NewAppErrorString("upload not found or expired", -4)
-	ErrForbidden            = apperr.NewAppErrorString("forbidden", -4)
-	ErrFileSizeMismatch     = apperr.NewAppErrorString("file size mismatch", -4)
-	ErrHashMismatch         = apperr.NewAppErrorString("file hash mismatch", -4)
-	ErrDownloadLimitReached = apperr.NewAppErrorString("download limit reached: only 1 download per day allowed", -4)
-	ErrHashAlreadyExists    = apperr.NewAppErrorString("hash already exists", -4)
+	errUserAlreadyUploading = apperr.NewAppErrorString("user already has an active upload", -4)
+	errUploadNotFound       = apperr.NewAppErrorString("upload not found or expired", -4)
+	errForbidden            = apperr.NewAppErrorString("forbidden", -4)
+	errFileSizeMismatch     = apperr.NewAppErrorString("file size mismatch", -4)
+	errHashMismatch         = apperr.NewAppErrorString("file hash mismatch", -4)
+	errDownloadLimitReached = apperr.NewAppErrorString("download limit reached: only 1 download per day allowed", -4)
+	errHashAlreadyExists    = apperr.NewAppErrorString("hash already exists", -4)
+	errCancelLimitReached   = apperr.NewAppErrorString("cancel limit reached: maximum 3 cancellations per hour allowed", -4)
 )
 
 const (
@@ -41,7 +44,7 @@ type UploadPending struct {
 }
 
 type UploadStatus struct {
-	Status    string          `json:"status"` // "pending", "processing", "completed", "failed"
+	Status    string          `json:"status"` // "pending", "processing", "completed", "failed", "cancelled"
 	Key       uuid.UUID       `json:"key"`
 	Error     string          `json:"error,omitempty"`
 	Item      *Item           `json:"item,omitempty"`
@@ -62,7 +65,7 @@ func (s *Service) setStatus(ctx context.Context, key uuid.UUID, status string, e
 	if err != nil {
 		return fmt.Errorf("uploadManager.setStatus: %w", apperr.NewAppError(err, 4))
 	}
-	if err := s.valkey.Raw().Set(ctx, "upload:status:"+key.String(), data, 24*time.Hour).Err(); err != nil {
+	if err = s.valkey.Raw().Set(ctx, "upload:status:"+key.String(), data, 24*time.Hour).Err(); err != nil {
 		return fmt.Errorf("uploadManager.setStatus: %w", apperr.NewAppError(err, 4))
 	}
 	return nil
@@ -72,13 +75,13 @@ func (s *Service) getUploadStatus(ctx context.Context, uid uuid.UUID, key uuid.U
 	val, err := s.valkey.Raw().Get(ctx, "upload:status:"+key.String()).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return UploadStatus{}, ErrUploadNotFound
+			return UploadStatus{}, errUploadNotFound
 		}
 		return UploadStatus{}, fmt.Errorf("uploadManager.getUploadStatus: %w", apperr.NewAppError(err, 4))
 	}
 
 	var status UploadStatus
-	if err := json.Unmarshal([]byte(val), &status); err != nil {
+	if err = json.Unmarshal([]byte(val), &status); err != nil {
 		return UploadStatus{}, fmt.Errorf("uploadManager.getUploadStatus: %w", apperr.NewAppError(err, 4))
 	}
 
@@ -92,7 +95,30 @@ func (s *Service) createUploadURL(ctx context.Context, uid uuid.UUID, fileSize i
 		return "", uuid.Nil(), fmt.Errorf("uploadManager.createUploadURL: %w", apperr.NewAppError(err, 4))
 	}
 	if activeKey != "" {
-		return "", uuid.Nil(), ErrUserAlreadyUploading
+		activeUUID, err := uuid.Parse(activeKey)
+		if err != nil {
+			return "", uuid.Nil(), fmt.Errorf("uploadManager.createUploadURL: invalid active key: %w", apperr.NewAppError(err, 4))
+		}
+
+		pendingVal, err := s.valkey.Raw().Get(ctx, "upload:pending:"+activeKey).Result()
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				return "", activeUUID, errUploadNotFound
+			}
+			return "", activeUUID, fmt.Errorf("uploadManager.createUploadURL: %w", apperr.NewAppError(err, 4))
+		}
+
+		var pending UploadPending
+		if err = json.Unmarshal([]byte(pendingVal), &pending); err != nil {
+			return "", activeUUID, fmt.Errorf("uploadManager.createUploadURL: %w", apperr.NewAppError(err, 4))
+		}
+
+		url, err := s.s3.GetURLForUpload(ctx, activeUUID, pending.FileSize)
+		if err != nil {
+			return "", activeUUID, fmt.Errorf("uploadManager.createUploadURL: %w", err)
+		}
+
+		return url, activeUUID, errUserAlreadyUploading
 	}
 
 	// 2. Проверяем, существует ли уже данный хеш в базе
@@ -101,7 +127,7 @@ func (s *Service) createUploadURL(ctx context.Context, uid uuid.UUID, fileSize i
 		return "", uuid.Nil(), fmt.Errorf("uploadManager.createUploadURL: %w", err)
 	}
 	if exists {
-		return "", uuid.Nil(), ErrHashAlreadyExists
+		return "", uuid.Nil(), errHashAlreadyExists
 	}
 
 	key := uuid.New()
@@ -138,23 +164,70 @@ func (s *Service) createUploadURL(ctx context.Context, uid uuid.UUID, fileSize i
 	return url, key, nil
 }
 
+// cancelUpload отменяет активную загрузку пользователя, удаляет временный файл из S3 и очищает Valkey.
+// Разрешено не более 3 отмен в час на пользователя.
+func (s *Service) cancelUpload(ctx context.Context, uid uuid.UUID) error {
+	// Лимит: не чаще 3 отмен в час на пользователя (проверяется до основной логики)
+	cancelLimitKey := "upload:cancel:limit:" + uid.String()
+	count, err := s.valkey.Raw().Incr(ctx, cancelLimitKey).Result()
+	if err != nil {
+		return fmt.Errorf("uploadManager.cancelUpload: %w", apperr.NewAppError(err, 4))
+	}
+	if count == 1 {
+		_ = s.valkey.Raw().Expire(ctx, cancelLimitKey, time.Hour).Err()
+	}
+	if count > 3 {
+		return errCancelLimitReached
+	}
+
+	activeKey, err := s.valkey.Raw().Get(ctx, "upload:user:"+uid.String()+":active").Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			slog.DebugContext(ctx, "uploadManager.cancelUpload: no active upload found", slog.String("uid", uid.String()))
+			return nil
+		}
+		return fmt.Errorf("uploadManager.cancelUpload: %w", apperr.NewAppError(err, 4))
+	}
+
+	key, err := uuid.Parse(activeKey)
+	if err != nil {
+		_ = s.valkey.Raw().Del(ctx, "upload:user:"+uid.String()+":active").Err()
+		return fmt.Errorf("uploadManager.cancelUpload: invalid active key: %w", apperr.NewAppError(err, 4))
+	}
+
+	// 1. Немедленно удаляем временный файл из S3, чтобы освободить место
+	_ = s.s3.Delete(ctx, "tmp/"+key.String())
+
+	// 2. Очищаем ключи и очередь в Valkey
+	pipe := s.valkey.Raw().Pipeline()
+	pipe.Del(ctx, "upload:user:"+uid.String()+":active")
+	pipe.Del(ctx, "upload:pending:"+key.String())
+	pipe.SRem(ctx, processingSetKey, key.String())
+	if _, err = pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("uploadManager.cancelUpload: %w", apperr.NewAppError(err, 4))
+	}
+
+	_ = s.setStatus(ctx, key, "cancelled", "upload cancelled by user", nil, nil)
+	return nil
+}
+
 // confirmUpload проверяет первые 512 байт (каплю), имя файла и размер, а затем запускает фоновую обработку
 func (s *Service) confirmUpload(ctx context.Context, uid uuid.UUID, key uuid.UUID) error {
 	pendingVal, err := s.valkey.Raw().Get(ctx, "upload:pending:"+key.String()).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return ErrUploadNotFound
+			return errUploadNotFound
 		}
 		return fmt.Errorf("uploadManager.confirmUpload: %w", apperr.NewAppError(err, 4))
 	}
 
 	var pending UploadPending
-	if err := json.Unmarshal([]byte(pendingVal), &pending); err != nil {
+	if err = json.Unmarshal([]byte(pendingVal), &pending); err != nil {
 		return fmt.Errorf("uploadManager.confirmUpload: %w", apperr.NewAppError(err, 4))
 	}
 
 	if pending.UserID != uid {
-		return ErrForbidden
+		return errForbidden
 	}
 
 	s3TmpKey := "tmp/" + key.String()
@@ -162,19 +235,25 @@ func (s *Service) confirmUpload(ctx context.Context, uid uuid.UUID, key uuid.UUI
 	// 1. Проверяем реальный размер файла в S3
 	actualSize, err := s.s3.Head(ctx, s3TmpKey)
 	if err != nil {
-		return fmt.Errorf("uploadManager.confirmUpload: %w", err)
+		if errors.Is(err, storageS3.ErrNotFound) {
+			return errUploadNotFound
+		}
+		return fmt.Errorf("uploadManager.confirmUpload: %w", apperr.NewAppError(err, 4))
 	}
 	if actualSize != pending.FileSize {
 		_ = s.s3.Delete(ctx, s3TmpKey)
 		_ = s.valkey.Raw().Del(ctx, "upload:user:"+uid.String()+":active")
 		_ = s.setStatus(ctx, key, "failed", "file size mismatch", nil, nil)
-		return ErrFileSizeMismatch
+		return errFileSizeMismatch
 	}
 
 	// 2. Скачиваем буквально каплю (первые 512 байт) из S3
 	capReader, err := s.s3.DownloadRange(ctx, s3TmpKey, 0, 511)
 	if err != nil {
-		return fmt.Errorf("uploadManager.confirmUpload: %w", err)
+		if errors.Is(err, storageS3.ErrNotFound) {
+			return errUploadNotFound
+		}
+		return fmt.Errorf("uploadManager.confirmUpload: %w", apperr.NewAppError(err, 4))
 	}
 	defer capReader.Close()
 
@@ -188,7 +267,7 @@ func (s *Service) confirmUpload(ctx context.Context, uid uuid.UUID, key uuid.UUI
 	}
 
 	// 4. Добавляем ключ в множество выполняемых задач Valkey для восстановления при падении
-	if err := s.valkey.Raw().SAdd(ctx, processingSetKey, key.String()).Err(); err != nil {
+	if err = s.valkey.Raw().SAdd(ctx, processingSetKey, key.String()).Err(); err != nil {
 		return fmt.Errorf("uploadManager.confirmUpload: %w", apperr.NewAppError(err, 4))
 	}
 
@@ -263,7 +342,7 @@ func (s *Service) processFullUpload(ctx context.Context, pending UploadPending, 
 		return err
 	})
 
-	if err := g.Wait(); err != nil {
+	if err = g.Wait(); err != nil {
 		apperr.Log(ctx, "uploadManager.processFullUpload: pipeline error", err)
 		_ = s.s3.Delete(context.Background(), s3TmpKey)
 		_ = s.setStatus(context.Background(), pending.Key, "failed", fmt.Sprintf("processing error: %v", err), nil, nil)
@@ -273,14 +352,14 @@ func (s *Service) processFullUpload(ctx context.Context, pending UploadPending, 
 	// Сверяем реальный вычисленный хеш с хешем пользователя
 	actualHash := hex.EncodeToString(hasher.Sum(nil))
 	if !strings.EqualFold(actualHash, pending.Sha256Hex) {
-		apperr.Log(ctx, "uploadManager.processFullUpload: hash mismatch", ErrHashMismatch)
+		apperr.Log(ctx, "uploadManager.processFullUpload: hash mismatch", errHashMismatch)
 		_ = s.s3.Delete(context.Background(), s3TmpKey)
 		_ = s.setStatus(context.Background(), pending.Key, "failed", "hash mismatch: actual file hash does not match expected", nil, nil)
 		return
 	}
 
 	// Перемещаем файл из tmp/<key> в <key>
-	if err := s.s3.Move(context.Background(), s3TmpKey, pending.Key.String()); err != nil {
+	if err = s.s3.Move(context.Background(), s3TmpKey, pending.Key.String()); err != nil {
 		apperr.Log(ctx, "uploadManager.processFullUpload: move error", err)
 		_ = s.s3.Delete(context.Background(), s3TmpKey)
 		_ = s.setStatus(context.Background(), pending.Key, "failed", fmt.Sprintf("s3 move error: %v", err), nil, nil)
@@ -288,7 +367,7 @@ func (s *Service) processFullUpload(ctx context.Context, pending UploadPending, 
 	}
 
 	// Сохраняем в таблицах s3 и items
-	if err := s.repo.createS3(context.Background(), pending.Key, pending.Sha256Hex); err != nil {
+	if err = s.repo.createS3(context.Background(), pending.Key, pending.Sha256Hex); err != nil {
 		apperr.Log(ctx, "uploadManager.processFullUpload: createS3 error", err)
 		_ = s.setStatus(context.Background(), pending.Key, "failed", fmt.Sprintf("database s3 error: %v", err), nil, nil)
 		return
@@ -326,7 +405,7 @@ func (s *Service) RecoverPendingUploads(ctx context.Context) {
 		}
 
 		var pending UploadPending
-		if err := json.Unmarshal([]byte(pendingVal), &pending); err != nil {
+		if err = json.Unmarshal([]byte(pendingVal), &pending); err != nil {
 			_ = s.valkey.Raw().SRem(ctx, processingSetKey, kStr).Err()
 			continue
 		}
@@ -368,7 +447,7 @@ func (s *Service) getDownloadURL(ctx context.Context, uid uuid.UUID, itemID int6
 
 	// 1. Только владелец может скачать
 	if item.OwnerID != uid {
-		return "", ErrForbidden
+		return "", errForbidden
 	}
 
 	// TODO: Удаление файла из S3 делать при удалении аккаунта пользователя
@@ -386,13 +465,13 @@ func (s *Service) getDownloadURL(ctx context.Context, uid uuid.UUID, itemID int6
 		return "", fmt.Errorf("uploadManager.getDownloadURL: %w", apperr.NewAppError(err, 4))
 	}
 	if !ok {
-		return "", ErrDownloadLimitReached
+		return "", errDownloadLimitReached
 	}
 
 	// Извлекаем имя файла из metadata, если есть
 	filename := fmt.Sprintf("%s.bin", item.S3ID.String())
 	var metaMap map[string]any
-	if err := json.Unmarshal(item.MetaData, &metaMap); err == nil {
+	if err = json.Unmarshal(item.MetaData, &metaMap); err == nil {
 		if fn, ok := metaMap["filename"].(string); ok && fn != "" {
 			filename = fn
 		}

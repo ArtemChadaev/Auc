@@ -12,9 +12,9 @@ import (
 )
 
 var (
-	ErrInvalidExtension = apperr.NewAppErrorString("file extension does not match content", -4)
-	ErrUnsupportedType  = apperr.NewAppErrorString("unsupported file type", -4)
-	ErrFileSizeExceeded = apperr.NewAppErrorString("file size exceeds maximum allowed for this type", -4)
+	errInvalidExtension = apperr.NewAppErrorString("file extension does not match content", -4)
+	errUnsupportedType  = apperr.NewAppErrorString("unsupported file type", -4)
+	errFileSizeExceeded = apperr.NewAppErrorString("file size exceeds maximum allowed for this type", -4)
 )
 
 const (
@@ -45,97 +45,70 @@ func MaxSizeForType(t itemType) int64 {
 	}
 }
 
-// validateFileExtension: если расширение файла не сходится с содержимым -> false
-func validateFileExtension(filename string, mtype *mimetype.MIME) bool {
+// validateSample проверяет первые 512 байт файла (каплю), сверяет MIME-тип с расширением
+// и контролирует допустимый размер файла для данного типа.
+func validateSample(r io.Reader, filename string, fileSize int64) (itemType, *mimetype.MIME, error) {
+	sample := make([]byte, 512)
+	n, err := io.ReadFull(r, sample)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return "", nil, fmt.Errorf("fileValidator.validateSample: %w", apperr.NewAppError(err, 4))
+	}
+	if n == 0 {
+		return "", nil, errUnsupportedType
+	}
+
+	mtype := mimetype.Detect(sample[:n])
 	userExt := strings.ToLower(filepath.Ext(filename))
-	if userExt == "" {
-		return false
-	}
+	canonicalExt := mtype.Extension()
 
-	ext := mtype.Extension()
-	if ext == userExt {
-		return true
-	}
-
-	if aliases, ok := extensionAliases[ext]; ok {
+	// Проверяем соответствие расширения файла и MIME-типа
+	validExt := false
+	if strings.EqualFold(userExt, canonicalExt) {
+		validExt = true
+	} else if aliases, ok := extensionAliases[canonicalExt]; ok {
 		if slices.Contains(aliases, userExt) {
-			return true
+			validExt = true
 		}
 	}
-	return false
-}
 
-// fileType возвращает краткий тип файла
-func fileType(filename string, mtype *mimetype.MIME) itemType {
-	mimeStr := mtype.String()
-	userExt := strings.ToLower(filepath.Ext(filename))
-
-	if strings.HasPrefix(mimeStr, "image/") {
-		return Image
+	// Особый случай для plain text и svg
+	if !validExt && mtype.String() == "text/plain" && (userExt == ".txt" || userExt == ".csv" || userExt == ".md") {
+		validExt = true
 	}
 
-	if strings.HasPrefix(mimeStr, "audio/") {
-		return Audio
+	if !validExt {
+		return "", nil, errInvalidExtension
 	}
 
-	if strings.HasPrefix(mimeStr, "video/") {
-		return Video
-	}
-
-	// 4. 3D-МОДЕЛИ
-	if strings.HasPrefix(mimeStr, "model/") ||
-		mimeStr == "application/sla" || // устаревший MIME для STL
-		mimeStr == "application/x-tgif" ||
-		userExt == ".obj" || userExt == ".fbx" || userExt == ".step" || userExt == ".stp" {
-		return Model3D
-	}
-
-	// 5. ДОКУМЕНТЫ
-	if mimeStr == "application/pdf" ||
-		mimeStr == "application/rtf" ||
-		mimeStr == "application/epub+zip" ||
-		mtype.Is("application/msword") ||
-		strings.Contains(mimeStr, "openxmlformats-officedocument") ||
-		strings.Contains(mimeStr, "opendocument") ||
-		userExt == ".csv" || userExt == ".txt" || userExt == ".tsv" || userExt == ".md" {
-		return Document
-	}
-
-	// 6. АРХИВЫ И ОБРАЗЫ ДИСКОВ
-	if mtype.Is("application/zip") ||
-		mtype.Is("application/x-tar") ||
-		mimeStr == "application/x-7z-compressed" ||
-		mimeStr == "application/vnd.rar" ||
-		mimeStr == "application/x-rar-compressed" ||
-		mimeStr == "application/gzip" ||
-		mimeStr == "application/x-bzip2" ||
-		mimeStr == "application/x-xz" ||
-		mimeStr == "application/x-iso9660-image" ||
-		mimeStr == "application/zstd" {
-		return Archive
-	}
-	return ""
-}
-
-// validateSample проверяет начальные байты (каплю) файла на соответствие расширению и лимитам размера
-func validateSample(r io.Reader, filename string, fileSize int64) (itemType, *mimetype.MIME, error) {
-	mtype, err := mimetype.DetectReader(r)
-	if err != nil {
-		return "", nil, fmt.Errorf("fileValidator.validateSample: %w", apperr.NewAppError(err, -4))
-	}
-
-	if !validateFileExtension(filename, mtype) {
-		return "", mtype, ErrInvalidExtension
-	}
-
-	iType := fileType(filename, mtype)
-	if iType == "" {
-		return "", mtype, ErrUnsupportedType
+	// Определяем тип элемента и проверяем лимиты размера
+	var iType itemType
+	switch {
+	case strings.HasPrefix(mtype.String(), "image/"):
+		iType = Image
+	case strings.HasPrefix(mtype.String(), "video/"):
+		iType = Video
+	case strings.HasPrefix(mtype.String(), "audio/"):
+		iType = Audio
+	case mtype.String() == "model/gltf-binary" || mtype.String() == "model/gltf+json" || userExt == ".glb" || userExt == ".gltf":
+		iType = Model3D
+	case mtype.String() == "application/pdf" ||
+		mtype.String() == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+		mtype.String() == "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+		mtype.String() == "text/plain":
+		iType = Document
+	case mtype.String() == "application/zip" ||
+		mtype.String() == "application/x-tar" ||
+		mtype.String() == "application/gzip" ||
+		mtype.String() == "application/x-7z-compressed" ||
+		mtype.String() == "application/vnd.rar":
+		iType = Archive
+	default:
+		return "", nil, errUnsupportedType
 	}
 
 	maxAllowed := MaxSizeForType(iType)
 	if fileSize > maxAllowed {
-		return iType, mtype, fmt.Errorf("fileValidator.validateSample: %w", ErrFileSizeExceeded)
+		return "", nil, errFileSizeExceeded
 	}
 
 	return iType, mtype, nil

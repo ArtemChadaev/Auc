@@ -70,7 +70,6 @@ func main() {
 
 	// http
 	mux := http.NewServeMux()
-	// Для всех запросах 5 мбайт, И для json и для
 	globalChain := alice.New(middleware.Logger, middleware.MaxBodySize(5<<20))
 	authChain := alice.New(middleware.AuthAccessToken)
 

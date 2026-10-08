@@ -1,5 +1,6 @@
 package item
 
+/*
 import (
 	"archive/zip"
 	"bytes"
@@ -435,3 +436,4 @@ func createItemMetadata(ctx context.Context, iType itemType, mType string, hmDat
 	_, _ = io.Copy(io.Discard, pr)
 	return metadata, nil
 }
+*/

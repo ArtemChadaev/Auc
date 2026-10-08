@@ -3,7 +3,7 @@ Accept: application/json
 
 {
     "name": "Art",
-    "email": "  AaaSSassS@saaw.awsd",
+    "email": "AaaSassS@saaw.awsd",
     "password": "123123123"
 }
 ###
@@ -11,14 +11,14 @@ POST http://localhost:8080/api/auth/login
 Accept: application/json
 
 {
-    "email": "   aaSSassS@saaw.awsd",
-    "password": "123123123   "
+    "email": "AaaSSassS@saaw.awsd",
+    "password": "123123123"
 }
 
 > handler.js
 
 ###
-POST http://localhost:80/api/auth/refresh
+POST http://localhost:8080/api/auth/refresh
 
 > handler.js
 ###

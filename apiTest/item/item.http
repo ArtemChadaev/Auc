@@ -1,0 +1,118 @@
+// Размер файла в байтах:
+// (Get-Item "C:\Users\Chadaev\GolandProjects\Auc\apiTest\items\file.jpg").Length
+
+// SHA-256 хэш:
+// (Get-FileHash "C:\Users\Chadaev\GolandProjects\Auc\apiTest\items\file.jpg" -Algorithm SHA256).Hash.ToLower()
+### 1. Получение URL для загрузки (POST /api/upload/url)
+POST {{host}}/api/upload/url
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "filename": "{{filename}}",
+  "file_size": {{file_size}},
+  "sha_256_hex": "{{sha_256_hex}}"
+}
+
+> {%
+    client.test("Presigned URL received", () => {
+        client.assert(response.status === 200, "Ожидался статус 200");
+        client.assert(response.body.data.url, "Отсутствует url");
+        client.assert(response.body.data.key, "Отсутствует key");
+    });
+    // Сохраняем url и key загрузки в глобальные переменные
+    client.global.set("upload_url", response.body.data.url);
+    client.global.set("upload_key", response.body.data.key);
+%}
+
+### 2. Прямая загрузка бинарных данных в S3
+PUT {{upload_url}}
+
+< ../items/file.jpg
+
+> {%
+    client.test("S3 upload 200 OK", () => {
+        client.assert(response.status === 200, "Ожидался статус 200 от S3");
+    });
+%}
+
+### 3. Подтверждение загрузки (POST /api/upload/confirm)
+POST {{host}}/api/upload/confirm
+Authorization: Bearer {{auth_token}}
+X-Upload-Key: {{upload_key}}
+Accept: application/json
+
+> {%
+    client.test("Upload confirmed 202 Accepted", () => {
+        client.assert(response.status === 202, "Ожидался статус 202 Accepted");
+    });
+%}
+
+### 4. Проверка статуса обработки (авто-поллинг до результата)
+GET {{host}}/api/upload/status?key={{upload_key}}
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    let status = response.body ? response.body.status : null;
+    let key = client.global.get("upload_key");
+    let token = client.global.get("auth_token");
+    let host = request.environment.get("host") || "http://localhost:8080";
+    let code = response.status;
+
+    // Крутится пока статус processing или pending (опрос каждые 5 сек)
+    while ((status === "processing" || status === "pending") && typeof java !== "undefined") {
+        client.log("Файл в обработке, ожидание 5 сек...");
+        java.lang.Thread.sleep(5000);
+
+        let url = new java.net.URL(host + "/api/upload/status?key=" + key);
+        let conn = url.openConnection();
+        conn.setRequestMethod("GET");
+        if (token) conn.setRequestProperty("Authorization", "Bearer " + token);
+        conn.setRequestProperty("Accept", "application/json");
+
+        let stream = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
+        let reader = new java.io.BufferedReader(new java.io.InputStreamReader(stream));
+        let raw = "", line;
+        while ((line = reader.readLine()) != null) raw += line;
+        reader.close();
+
+        let data = JSON.parse(raw);
+        status = data.status;
+        client.log("Обновленный статус: " + status);
+
+        if (status === "completed") {
+            if (data.item && data.item.id) {
+                client.global.set("item_id", data.item.id);
+            }
+            break;
+        }
+        if (code >= 400 || status === "error" || status === "failed") {
+            break;
+        }
+    }
+
+    if (code === 201) {
+        client.global.set("item_id", response.body.data.id);
+    }
+
+    client.assert(code === 201, "Ожидался статус completed, получен: " + status);
+
+%}
+
+### 5. Получение ссылки на скачивание (GET /api/item/{id}/download)
+GET {{host}}/api/item/{{item_id}}/download
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Download URL 200 OK", () => {
+        client.assert(response.status === 200, "Ожидался статус 200");
+        client.assert(response.body.data.url, "Отсутствует download url");
+    });
+%}
+
+### 6. Отмена ссылки на скачивание (POST /api/item/upload/cancel)
+POST {{host}}/api/upload/cancel
+Authorization: Bearer {{auth_token}}

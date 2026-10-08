@@ -24,20 +24,20 @@ type AppError struct {
 	Level slog.Level
 }
 
-func (e AppError) Error() string {
+func (e *AppError) Error() string {
 	return e.Err.Error()
 }
 
-func (e AppError) Unwrap() error {
+func (e *AppError) Unwrap() error {
 	return e.Err
 }
 
-func NewAppError(err error, level slog.Level) AppError {
-	return AppError{Err: err, Level: level}
+func NewAppError(err error, level slog.Level) *AppError {
+	return &AppError{Err: err, Level: level}
 }
 
-func NewAppErrorString(err string, level slog.Level) AppError {
-	return AppError{Err: errors.New(err), Level: level}
+func NewAppErrorString(err string, level slog.Level) *AppError {
+	return &AppError{Err: errors.New(err), Level: level}
 }
 
 // Log Выводит в логи ошибку смотря на её уровень (использовать при неявном error)
@@ -52,8 +52,7 @@ func Log(ctx context.Context, msg string, err error, args ...any) {
 		level = 7
 	}
 
-	var appErr *AppError
-	if errors.As(err, &appErr) {
+	if appErr, ok := errors.AsType[*AppError](err); ok {
 		level = appErr.Level
 	}
 
@@ -61,7 +60,7 @@ func Log(ctx context.Context, msg string, err error, args ...any) {
 		return
 	}
 
-	//Чтобы строка вызыва не тут
+	//Чтобы строка вызова не тут
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:])
 

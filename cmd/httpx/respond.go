@@ -22,7 +22,6 @@ var (
 	ErrRespInvalidAuth       = Response{Code: http.StatusUnauthorized, Error: "invalid authorization"}
 	ErrRespInternalServer    = Response{Code: http.StatusInternalServerError, Error: "internal server error"}
 	ErrRespFieldIsTaken      = Response{Code: http.StatusConflict, Error: "field is taken"}
-	ErrRespMarshal           = Response{Code: http.StatusInternalServerError, Error: "failed to marshal response"}
 	ErrRespInvalidReqBody    = Response{Code: http.StatusBadRequest, Error: "invalid request body"}
 	ErrRespReqEntityTooLarge = Response{Code: http.StatusRequestEntityTooLarge, Error: "request entity too large"}
 
@@ -70,7 +69,7 @@ func DecodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 func WriteResponse(w http.ResponseWriter, resp Response) {
 	js, err := json.Marshal(resp)
 	if err != nil {
-		WriteResponse(w, ErrRespMarshal)
+		WriteResponse(w, Response{Code: http.StatusInternalServerError, Error: "failed to marshal response"})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

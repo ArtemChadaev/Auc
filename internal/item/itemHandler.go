@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ type service interface {
 	giftItem(ctx context.Context, uid, newOwner uuid.UUID, itemID int64, description string) error
 	createUploadURL(ctx context.Context, uid uuid.UUID, fileSize int64, sha256Hex, filename string) (string, uuid.UUID, error)
 	confirmUpload(ctx context.Context, uid uuid.UUID, key uuid.UUID) error
+	cancelUpload(ctx context.Context, uid uuid.UUID) error
 	getUploadStatus(ctx context.Context, uid uuid.UUID, key uuid.UUID) (UploadStatus, error)
 	getDownloadURL(ctx context.Context, uid uuid.UUID, itemID int64) (string, error)
 }
@@ -38,14 +40,6 @@ func NewHandler(service service) *Handler {
 // getUploadURL генерирует Presigned PUT URL для прямой загрузки файла клиентом в S3.
 //
 // Эндпоинт: POST /api/upload/url
-// Content-Type: application/json
-// Accept: application/json
-// Требует авторизации пользователя.
-//
-// Принимает тело (JSON):
-//   - file_size: int64 (обязательно) — размер файла в байтах.
-//   - sha_256_hex: string (обязательно) — криптографический SHA-256 хеш (64 символа).
-//   - filename: string (обязательно) — исходное имя файла с расширением (например "photo.jpg" или "video.mp4").
 func (h *Handler) getUploadURL(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
@@ -94,7 +88,7 @@ func (h *Handler) getUploadURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := hex.DecodeString(req.Sha256Hex); err != nil {
+	if _, err = hex.DecodeString(req.Sha256Hex); err != nil {
 		httpx.WriteResponse(w, httpx.Response{
 			Code:  http.StatusBadRequest,
 			Error: "invalid sha256 hex format",
@@ -104,11 +98,18 @@ func (h *Handler) getUploadURL(w http.ResponseWriter, r *http.Request) {
 
 	url, key, err := h.service.createUploadURL(r.Context(), uid, req.FileSize, req.Sha256Hex, req.Filename)
 	if err != nil {
-		if errors.Is(err, ErrUserAlreadyUploading) {
-			httpx.WriteResponse(w, httpx.ErrRespUserAlreadyUploading)
+		if errors.Is(err, errUserAlreadyUploading) {
+			httpx.WriteResponse(w, httpx.Response{
+				Code:  http.StatusConflict,
+				Error: errUserAlreadyUploading.Error(),
+				Data: map[string]any{
+					"url": url,
+					"key": key,
+				},
+			})
 			return
 		}
-		if errors.Is(err, ErrHashAlreadyExists) {
+		if errors.Is(err, errHashAlreadyExists) {
 			httpx.WriteResponse(w, httpx.ErrRespHashAlreadyExists)
 			return
 		}
@@ -118,6 +119,30 @@ func (h *Handler) getUploadURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK, Data: map[string]any{"url": url, "key": key}})
+}
+
+// cancelUpload отменяет активную загрузку пользователя, удаляет временный файл из S3 и освобождает слот.
+//
+// Эндпоинт: POST /api/upload/cancel
+func (h *Handler) cancelUpload(w http.ResponseWriter, r *http.Request) {
+	uid, err := cfg.GetUID(r.Context())
+	if err != nil {
+		apperr.Log(r.Context(), "cancelUpload.GetUID", err)
+		httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
+		return
+	}
+
+	if err = h.service.cancelUpload(r.Context(), uid); err != nil {
+		if errors.Is(err, errCancelLimitReached) {
+			httpx.WriteResponse(w, httpx.Response{Code: http.StatusTooManyRequests, Error: err.Error()})
+			return
+		}
+		apperr.Log(r.Context(), "cancelUpload", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+		return
+	}
+
+	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK})
 }
 
 // confirmUpload вызывается после успешной заливки файла в S3 для мгновенной проверки «капли» и старта фонового парсинга.
@@ -163,16 +188,16 @@ func (h *Handler) confirmUpload(w http.ResponseWriter, r *http.Request) {
 
 	err = h.service.confirmUpload(r.Context(), uid, key)
 	if err != nil {
-		if errors.Is(err, ErrUploadNotFound) {
+		if errors.Is(err, errUploadNotFound) {
 			httpx.WriteResponse(w, httpx.ErrRespNotFound)
 			return
 		}
-		if errors.Is(err, ErrForbidden) {
+		if errors.Is(err, errForbidden) {
 			httpx.WriteResponse(w, httpx.Response{Code: http.StatusForbidden, Error: "forbidden"})
 			return
 		}
-		if errors.Is(err, ErrFileSizeMismatch) || errors.Is(err, ErrUnsupportedType) ||
-			errors.Is(err, ErrInvalidExtension) || errors.Is(err, ErrFileSizeExceeded) {
+		if errors.Is(err, errFileSizeMismatch) || errors.Is(err, errUnsupportedType) ||
+			errors.Is(err, errInvalidExtension) || errors.Is(err, errFileSizeExceeded) {
 			httpx.WriteResponse(w, httpx.Response{
 				Code:  http.StatusBadRequest,
 				Error: err.Error(),
@@ -197,7 +222,11 @@ func (h *Handler) confirmUpload(w http.ResponseWriter, r *http.Request) {
 // getUploadStatus проверяет текущий статус обработки файла.
 //
 // Эндпоинт: GET /api/upload/status?key=<uuid>
-// Параметр: key=<uuid> (query param)
+// Ответы:
+//   - 200 OK: файл в процессе ("pending", "processing") без data и error
+//   - 201 Created: файл обработан ("completed"), в Data возвращается Item
+//   - 400 / 500: ошибка обработки ("failed"), в Error возвращается текст ошибки
+//   - 410 Gone: файл отменен ("cancelled")
 func (h *Handler) getUploadStatus(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
@@ -226,7 +255,7 @@ func (h *Handler) getUploadStatus(w http.ResponseWriter, r *http.Request) {
 
 	status, err := h.service.getUploadStatus(r.Context(), uid, key)
 	if err != nil {
-		if errors.Is(err, ErrUploadNotFound) {
+		if errors.Is(err, errUploadNotFound) {
 			httpx.WriteResponse(w, httpx.ErrRespNotFound)
 			return
 		}
@@ -235,10 +264,39 @@ func (h *Handler) getUploadStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.WriteResponse(w, httpx.Response{
-		Code: http.StatusOK,
-		Data: status,
-	})
+	switch status.Status {
+	case "completed":
+		data := any(status.Item)
+		if status.Item == nil {
+			data = status.Metadata
+		}
+		httpx.WriteResponse(w, httpx.Response{
+			Code: http.StatusCreated,
+			Data: data,
+		})
+	case "failed":
+		slog.ErrorContext(r.Context(), "getUploadStatus: upload failed", slog.String("key", key.String()), slog.String("error", status.Error))
+		code := http.StatusInternalServerError
+		clientErr := "file processing failed"
+		if strings.Contains(status.Error, "hash mismatch") {
+			code = http.StatusBadRequest
+			clientErr = "file hash mismatch"
+		}
+		httpx.WriteResponse(w, httpx.Response{
+			Code:  code,
+			Error: clientErr,
+		})
+	case "cancelled":
+		httpx.WriteResponse(w, httpx.Response{
+			Code:  http.StatusGone,
+			Error: "upload cancelled",
+		})
+	default:
+		// "pending", "processing" -> 200 OK без data и error
+		httpx.WriteResponse(w, httpx.Response{
+			Code: http.StatusOK,
+		})
+	}
 }
 
 // getDownloadURL возвращает Presigned GET URL для скачивания файла владельцем (не более 1 раза в день).
@@ -268,11 +326,11 @@ func (h *Handler) getDownloadURL(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteResponse(w, httpx.ErrRespNotFound)
 			return
 		}
-		if errors.Is(err, ErrForbidden) {
+		if errors.Is(err, errForbidden) {
 			httpx.WriteResponse(w, httpx.Response{Code: http.StatusForbidden, Error: "forbidden"})
 			return
 		}
-		if errors.Is(err, ErrDownloadLimitReached) {
+		if errors.Is(err, errDownloadLimitReached) {
 			httpx.WriteResponse(w, httpx.ErrRespDownloadLimit)
 			return
 		}
@@ -293,6 +351,7 @@ func (h *Handler) RouterUpload() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /url", h.getUploadURL)
 	mux.HandleFunc("POST /confirm", h.confirmUpload)
+	mux.HandleFunc("POST /cancel", h.cancelUpload)
 	mux.HandleFunc("GET /status", h.getUploadStatus)
 	return mux
 }
