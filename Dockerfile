@@ -11,7 +11,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM mwader/static-ffmpeg:6.1 AS ffmpeg
 
 FROM alpine:latest
-COPY --from=ffmpeg --chmod=755 /ffprobe /usr/local/bin/
+COPY --from=ffmpeg --chmod=755 /ffmpeg /ffprobe /usr/local/bin/
 WORKDIR /root/
 COPY --from=builder /my-app .
 EXPOSE 8080

@@ -1,0 +1,375 @@
+# ==============================================================================
+# TEST SUITE: DOCUMENTS & USER CONSENTS API (/api/documents)
+# Включает позитивные сценарии и негативные / граничные проверки.
+# ==============================================================================
+
+### 1.1 Получение списка документов (Позитивный сценарий)
+GET {{host}}/api/documents/
+Accept: application/json
+
+> {%
+    client.test("List documents successfully (200)", () => {
+        client.assert(response.status === 200, "Ожидался статус 200 OK, получен: " + response.status);
+    });
+%}
+
+### 1.2 Получение активного документа по имени (Позитивный сценарий)
+GET {{host}}/api/documents/name/terms-of-service
+Accept: application/json
+
+> {%
+    client.test("Get document by name successfully (200)", () => {
+        client.assert(response.status === 200, "Ожидался статус 200 OK, получен: " + response.status);
+    });
+%}
+
+### 1.3 Получение документа по несуществующему имени (404)
+GET {{host}}/api/documents/name/non_existent_document_name_xyz
+Accept: application/json
+
+> {%
+    client.test("Document not found by name (404)", () => {
+        client.assert(response.status === 404, "Ожидался статус 404 Not Found, получен: " + response.status);
+    });
+%}
+
+### 1.4 Получение документа по имени: проверка на SQL Injection
+GET {{host}}/api/documents/name/' OR 1=1--
+Accept: application/json
+
+> {%
+    client.test("Handle SQL injection in document name safely", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500");
+    });
+%}
+
+### 1.5 Получение документа по ID (Позитивный сценарий)
+GET {{host}}/api/documents/3
+Accept: application/json
+
+> {%
+    client.test("Get document by ID successfully (200)", () => {
+        client.assert(response.status === 200, "Ожидался статус 200 OK, получен: " + response.status);
+    });
+%}
+
+### 1.6 Получение документа по несуществующему ID (404)
+GET {{host}}/api/documents/999999999
+Accept: application/json
+
+> {%
+    client.test("Document not found by ID (404)", () => {
+        client.assert(response.status === 404, "Ожидался статус 404 Not Found, получен: " + response.status);
+    });
+%}
+
+### 1.7 Получение документа по нулевому ID (0)
+GET {{host}}/api/documents/0
+Accept: application/json
+
+> {%
+    client.test("Reject or not found on document_id = 0 (400/404)", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался статус 400 или 404, получен: " + response.status);
+    });
+%}
+
+### 1.8 Получение документа по отрицательному ID (-1)
+GET {{host}}/api/documents/-1
+Accept: application/json
+
+> {%
+    client.test("Reject or not found on negative document_id (400/404)", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался статус 400 или 404, получен: " + response.status);
+    });
+%}
+
+### 1.9 Получение документа по нечисловому ID (строка)
+GET {{host}}/api/documents/invalid_id
+Accept: application/json
+
+> {%
+    client.test("Reject non-numeric document_id (400/404)", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался статус 400 или 404, получен: " + response.status);
+    });
+%}
+
+### 2.1 Создание согласия (Позитивный сценарий, положительный int64 document_id)
+POST {{host}}/api/documents/consents
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "document_id": 3
+}
+
+> {%
+    client.test("Consent created successfully (200/201)", () => {
+        client.assert(response.status === 200 || response.status === 201, "Ожидался статус 200 или 201, получен: " + response.status);
+    });
+%}
+
+### 2.2 Создание согласия: Запрос БЕЗ токена авторизации (401)
+POST {{host}}/api/documents/consents
+Content-Type: application/json
+Accept: application/json
+
+{
+  "document_id": 3
+}
+
+> {%
+    client.test("Reject unauthorized consent creation (401)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized, получен: " + response.status);
+    });
+%}
+
+### 2.3 Создание согласия: Поддельный токен авторизации (401)
+POST {{host}}/api/documents/consents
+Authorization: Bearer fake_invalid_jwt_token
+Content-Type: application/json
+Accept: application/json
+
+{
+  "document_id": 3
+}
+
+> {%
+    client.test("Reject invalid token on consent creation (401)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized, получен: " + response.status);
+    });
+%}
+
+### 2.4 Создание согласия: Пустой JSON-объект {} (400/422)
+POST {{host}}/api/documents/consents
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{}
+
+> {%
+    client.test("Reject empty json body (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 2.5 Создание согласия: Нулевой document_id (0)
+POST {{host}}/api/documents/consents
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "document_id": 0
+}
+
+> {%
+    client.test("Reject zero document_id (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 2.6 Создание согласия: Отрицательный document_id (-1)
+POST {{host}}/api/documents/consents
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "document_id": -1
+}
+
+> {%
+    client.test("Reject negative document_id (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 2.7 Создание согласия: Несовпадение типов (document_id как строка)
+POST {{host}}/api/documents/consents
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "document_id": "1"
+}
+
+> {%
+    client.test("Reject string in document_id (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 2.8 Создание согласия: Несовпадение типов (дробное число float)
+POST {{host}}/api/documents/consents
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "document_id": 1.5
+}
+
+> {%
+    client.test("Reject float document_id (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 2.9 Создание согласия: document_id = null
+POST {{host}}/api/documents/consents
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "document_id": null
+}
+
+> {%
+    client.test("Reject null document_id (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 2.10 Создание согласия: Переполнение int64 (Integer Overflow)
+POST {{host}}/api/documents/consents
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "document_id": 9223372036854775808
+}
+
+> {%
+    client.test("Reject int64 overflow (400/422)", () => {
+        client.assert(response.status >= 400 && response.status < 500, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 2.11 Создание согласия: Несуществующий документ (404/400)
+POST {{host}}/api/documents/consents
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "document_id": 999999999
+}
+
+> {%
+    client.test("Reject non-existent document (400/404)", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался статус 400 или 404, получен: " + response.status);
+    });
+%}
+
+### 3.1 Получение списка согласий текущего пользователя (Позитивный сценарий)
+GET {{host}}/api/documents/consents
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Get user consents successfully (200)", () => {
+        client.assert(response.status === 200, "Ожидался статус 200 OK, получен: " + response.status);
+    });
+%}
+
+### 3.2 Получение списка согласий: Запрос БЕЗ токена авторизации (401)
+GET {{host}}/api/documents/consents
+Accept: application/json
+
+> {%
+    client.test("Reject unauthorized consents request (401)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized, получен: " + response.status);
+    });
+%}
+
+### 3.3 Получение списка согласий: Поддельный токен авторизации (401)
+GET {{host}}/api/documents/consents
+Authorization: Bearer fake_invalid_jwt_token
+Accept: application/json
+
+> {%
+    client.test("Reject fake token on consents request (401)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized, получен: " + response.status);
+    });
+%}
+
+### 4.1 Получение согласия по ID документа (Позитивный сценарий)
+GET {{host}}/api/documents/consents/3
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Get consent by document ID successfully (200)", () => {
+        client.assert(response.status === 200, "Ожидался статус 200 OK, получен: " + response.status);
+    });
+%}
+
+### 4.2 Получение согласия по ID документа: Запрос БЕЗ токена авторизации (401)
+GET {{host}}/api/documents/consents/3
+Accept: application/json
+
+> {%
+    client.test("Reject unauthorized consent by ID request (401)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized, получен: " + response.status);
+    });
+%}
+
+### 4.3 Получение согласия по ID документа: Поддельный токен авторизации (401)
+GET {{host}}/api/documents/consents/3
+Authorization: Bearer fake_invalid_jwt_token
+Accept: application/json
+
+> {%
+    client.test("Reject fake token on consent by ID request (401)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized, получен: " + response.status);
+    });
+%}
+
+### 4.4 Получение согласия для документа без согласия / несуществующего документа (404)
+GET {{host}}/api/documents/consents/999999999
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Consent not found for document ID (404)", () => {
+        client.assert(response.status === 404, "Ожидался статус 404 Not Found, получен: " + response.status);
+    });
+%}
+
+### 4.5 Получение согласия по нулевому ID документа (0)
+GET {{host}}/api/documents/consents/0
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject or not found on zero consent document ID (400/404)", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался статус 400 или 404, получен: " + response.status);
+    });
+%}
+
+### 4.6 Получение согласия по отрицательному ID документа (-1)
+GET {{host}}/api/documents/consents/-1
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject or not found on negative consent document ID (400/404)", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался статус 400 или 404, получен: " + response.status);
+    });
+%}
+
+### 4.7 Получение согласия по нечисловому ID документа (строка)
+GET {{host}}/api/documents/consents/invalid_id
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject non-numeric consent document ID (400/404)", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался статус 400 или 404, получен: " + response.status);
+    });
+%}

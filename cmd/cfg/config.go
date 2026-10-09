@@ -15,11 +15,16 @@ type config struct {
 	Domain              string `env:"DOMAIN" default:"test.com"`
 
 	// S3
-	Endpoint  string `env:"ENDPOINT,required,notEmpty"`
-	Region    string `env:"REGION,required,notEmpty"`
-	AccessKey string `env:"ACCESS_KEY,required,notEmpty"`
-	SecretKey string `env:"SECRET_KEY,required,notEmpty"`
-	Bucket    string `env:"BUCKET,required,notEmpty"`
+	Endpoint string `env:"ENDPOINT,required,notEmpty"`
+	Region   string `env:"REGION,required,notEmpty"`
+	// global Для сервера чисто, не для пользователей (хранение item и т.д., без доступа)
+	GlobalAccessKey string `env:"GLOBAL_ACCESS_KEY,required,notEmpty"`
+	GlobalSecretKey string `env:"GLOBAL_SECRET_KEY,required,notEmpty"`
+	GlobalBucket    string `env:"GLOBAL_BUCKET,required,notEmpty"`
+	// photos
+	PhotosAucAccessKey string `env:"PHOTOS_ACCESS_KEY,required,notEmpty"`
+	PhotosSecretKey    string `env:"PHOTOS_SECRET_KEY,required,notEmpty"`
+	PhotosBucket       string `env:"PHOTOS_BUCKET,required,notEmpty"`
 }
 
 var Cfg *config

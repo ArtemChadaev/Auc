@@ -13,8 +13,8 @@ import (
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
 	"github.com/ArtemChadaev/Auction/cmd/httpx"
+	"github.com/ArtemChadaev/Auction/cmd/storage"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
-	"github.com/ArtemChadaev/Auction/internal/storage"
 )
 
 type service interface {

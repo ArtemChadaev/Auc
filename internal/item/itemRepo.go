@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"uuid"
 
-	"github.com/ArtemChadaev/Auction/internal/storage"
+	"github.com/ArtemChadaev/Auction/cmd/storage"
 	"github.com/jackc/pgx/v5"
 )
 

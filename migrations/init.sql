@@ -1,9 +1,16 @@
 begin;
 
+-- id и является ключом в s3
+create table s3 (
+    id uuid primary key default uuidv4(),
+    hash text not null unique
+);
+
 create table  users (
     id uuid primary key default uuidv7(),
     name text not null,
-    email text not null constraint users_email_lower check (email = lower(email) ),
+    avatar_id uuid references s3(id),
+    email text not null constraint users_email_lower check (email = lower(email)),
     password_hash text not null,
     deleted_at timestamptz default null,
     balance int not null default 0,
@@ -25,12 +32,6 @@ create table user_sessions (
 );
 
 create index user_sessions_allow on user_sessions (user_id) WHERE revoked_at is null;
-
--- id и является ключом в s3
-create table s3 (
-    id uuid primary key,
-    hash text not null unique
-);
 
 -- key - ключ от s3 хранилища
 create table items (
@@ -123,14 +124,12 @@ create table hold (
 
 create unique index ux_hold_user_lot_active on hold (lot_id, user_id) where status = 'active';
 
--- TODO: Индексы сделать остальные для скорости!!!
-
 create table documents (
     id bigint generated always as identity primary key,
     name text not null,
     version text not null default '1.0',
     is_major bool not null default true,
-    text json not null,
+    text text not null,
     published_at timestamptz not null default now(),
     superseded_at timestamptz default null,
     unique (name, version)
@@ -138,16 +137,12 @@ create table documents (
 create unique index on documents (name) where superseded_at is null;
 
 CREATE TABLE user_consents (
-    id          bigint generated always as identity primary key,
     document_id bigint not null references documents(id),
-    user_id     uuid references users(id),   -- NULL для гостя
-    anon_id     uuid,                          -- для гостя, до регистрации
-    action      text NOT NULL CHECK (action IN ('granted','withdrawn')),
-    granted_at  timestamptz NOT NULL DEFAULT now(),
-    ip          inet,
-    source      text NOT NULL,   -- gate0|registration|upload|bid|settings|reaccept
-    constraint user_consents_user_or_anon CHECK (user_id IS NOT NULL OR anon_id IS NOT NULL)
-);
-CREATE INDEX ON user_consents (user_id, document_id, granted_at DESC);
+    user_id     uuid not null references users(id),
+    created_at  timestamptz NOT NULL DEFAULT now(),
 
+    PRIMARY KEY (document_id, user_id)
+);
+
+create index ux_user_consents_user_id on user_consents (user_id);
 commit;

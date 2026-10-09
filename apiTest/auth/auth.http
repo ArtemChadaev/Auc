@@ -15,12 +15,12 @@ Accept: application/json
     "password": "123123123"
 }
 
-> handler.js
+> ../handler.js
 
 ###
 POST http://localhost:8080/api/auth/refresh
 
-> handler.js
+> ../handler.js
 ###
 POST localhost:8080/api/auth/logout
 Authorization:Bearer {{auth_token}}
@@ -50,3 +50,10 @@ Accept: application/json
 {
     "name": "I AM GOD     "
 }
+
+###
+PUT localhost:8080/api/user/me/avatar
+Authorization:Bearer {{auth_token}}
+Content-Type: image/jpeg
+
+< ../files/fileCopy.jpg

@@ -7,9 +7,9 @@ import (
 	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
+	"github.com/ArtemChadaev/Auction/cmd/storage"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
 	"github.com/ArtemChadaev/Auction/cmd/valkey"
-	"github.com/ArtemChadaev/Auction/internal/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

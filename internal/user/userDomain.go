@@ -6,10 +6,11 @@ import (
 )
 
 type User struct {
-	Id        uuid.UUID  `db:"id" json:"id"`
+	ID        uuid.UUID  `db:"id" json:"id"`
 	Name      string     `db:"name" json:"name"`
+	AvatarID  *uuid.UUID `db:"avatar_id" json:"avatar_id,omitempty"`
 	Email     string     `db:"email" json:"email"`
-	DeletedAt *time.Time `db:"deleted_at" json:"deleted_at"`
+	DeletedAt *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
 	Balance   int        `db:"balance" json:"balance"`
 	Hold      int        `db:"hold" json:"hold"`
 	CreatedAt time.Time  `db:"created_at" json:"created_at"`
