@@ -16,6 +16,7 @@ import (
 	"github.com/ArtemChadaev/Auction/cmd/valkey"
 	"github.com/ArtemChadaev/Auction/internal/documents"
 	"github.com/ArtemChadaev/Auction/internal/item"
+	"github.com/ArtemChadaev/Auction/internal/lot"
 	"github.com/ArtemChadaev/Auction/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/justinas/alice"
@@ -98,7 +99,10 @@ func main() {
 	mux.Handle("/api/item/", http.StripPrefix("/api/item", authChain.Then(itemHandler.RouterItem())))
 
 	docHandler := documents.NewHandler(documents.NewService(documents.NewRepo(pool)))
-	mux.Handle("/api/documents/", http.StripPrefix("/api/documents", docHandler.Routes(authChain)))
+	mux.Handle("/api/document/", http.StripPrefix("/api/documents", docHandler.Routes(authChain)))
+
+	lotHandler := lot.NewHandler()
+	mux.Handle("/api/lot/", http.StripPrefix("/api/lot", lotHandler.Routes()))
 
 	srv := &http.Server{
 		Addr:              ":8080",

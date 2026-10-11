@@ -4,7 +4,7 @@
 # ==============================================================================
 
 ### 1.1 Получение списка документов (Позитивный сценарий)
-GET {{host}}/api/documents/
+GET {{host}}/api/document/
 Accept: application/json
 
 > {%
@@ -14,7 +14,7 @@ Accept: application/json
 %}
 
 ### 1.2 Получение активного документа по имени (Позитивный сценарий)
-GET {{host}}/api/documents/name/terms-of-service
+GET {{host}}/api/document/name/terms-of-service
 Accept: application/json
 
 > {%
@@ -24,7 +24,7 @@ Accept: application/json
 %}
 
 ### 1.3 Получение документа по несуществующему имени (404)
-GET {{host}}/api/documents/name/non_existent_document_name_xyz
+GET {{host}}/api/document/name/non_existent_document_name_xyz
 Accept: application/json
 
 > {%
@@ -34,7 +34,7 @@ Accept: application/json
 %}
 
 ### 1.4 Получение документа по имени: проверка на SQL Injection
-GET {{host}}/api/documents/name/' OR 1=1--
+GET {{host}}/api/document/name/' OR 1=1--
 Accept: application/json
 
 > {%
@@ -44,7 +44,7 @@ Accept: application/json
 %}
 
 ### 1.5 Получение документа по ID (Позитивный сценарий)
-GET {{host}}/api/documents/3
+GET {{host}}/api/document/3
 Accept: application/json
 
 > {%
@@ -54,7 +54,7 @@ Accept: application/json
 %}
 
 ### 1.6 Получение документа по несуществующему ID (404)
-GET {{host}}/api/documents/999999999
+GET {{host}}/api/document/999999999
 Accept: application/json
 
 > {%
@@ -64,7 +64,7 @@ Accept: application/json
 %}
 
 ### 1.7 Получение документа по нулевому ID (0)
-GET {{host}}/api/documents/0
+GET {{host}}/api/document/0
 Accept: application/json
 
 > {%
@@ -74,7 +74,7 @@ Accept: application/json
 %}
 
 ### 1.8 Получение документа по отрицательному ID (-1)
-GET {{host}}/api/documents/-1
+GET {{host}}/api/document/-1
 Accept: application/json
 
 > {%
@@ -84,7 +84,7 @@ Accept: application/json
 %}
 
 ### 1.9 Получение документа по нечисловому ID (строка)
-GET {{host}}/api/documents/invalid_id
+GET {{host}}/api/document/invalid_id
 Accept: application/json
 
 > {%
@@ -94,7 +94,7 @@ Accept: application/json
 %}
 
 ### 2.1 Создание согласия (Позитивный сценарий, положительный int64 document_id)
-POST {{host}}/api/documents/consents
+POST {{host}}/api/document/consents
 Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
@@ -110,7 +110,7 @@ Accept: application/json
 %}
 
 ### 2.2 Создание согласия: Запрос БЕЗ токена авторизации (401)
-POST {{host}}/api/documents/consents
+POST {{host}}/api/document/consents
 Content-Type: application/json
 Accept: application/json
 
@@ -125,7 +125,7 @@ Accept: application/json
 %}
 
 ### 2.3 Создание согласия: Поддельный токен авторизации (401)
-POST {{host}}/api/documents/consents
+POST {{host}}/api/document/consents
 Authorization: Bearer fake_invalid_jwt_token
 Content-Type: application/json
 Accept: application/json
@@ -141,7 +141,7 @@ Accept: application/json
 %}
 
 ### 2.4 Создание согласия: Пустой JSON-объект {} (400/422)
-POST {{host}}/api/documents/consents
+POST {{host}}/api/document/consents
 Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
@@ -155,7 +155,7 @@ Accept: application/json
 %}
 
 ### 2.5 Создание согласия: Нулевой document_id (0)
-POST {{host}}/api/documents/consents
+POST {{host}}/api/document/consents
 Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
@@ -171,7 +171,7 @@ Accept: application/json
 %}
 
 ### 2.6 Создание согласия: Отрицательный document_id (-1)
-POST {{host}}/api/documents/consents
+POST {{host}}/api/document/consents
 Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
@@ -187,7 +187,7 @@ Accept: application/json
 %}
 
 ### 2.7 Создание согласия: Несовпадение типов (document_id как строка)
-POST {{host}}/api/documents/consents
+POST {{host}}/api/document/consents
 Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
@@ -203,7 +203,7 @@ Accept: application/json
 %}
 
 ### 2.8 Создание согласия: Несовпадение типов (дробное число float)
-POST {{host}}/api/documents/consents
+POST {{host}}/api/document/consents
 Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
@@ -219,7 +219,7 @@ Accept: application/json
 %}
 
 ### 2.9 Создание согласия: document_id = null
-POST {{host}}/api/documents/consents
+POST {{host}}/api/document/consents
 Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
@@ -235,7 +235,7 @@ Accept: application/json
 %}
 
 ### 2.10 Создание согласия: Переполнение int64 (Integer Overflow)
-POST {{host}}/api/documents/consents
+POST {{host}}/api/document/consents
 Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
@@ -251,7 +251,7 @@ Accept: application/json
 %}
 
 ### 2.11 Создание согласия: Несуществующий документ (404/400)
-POST {{host}}/api/documents/consents
+POST {{host}}/api/document/consents
 Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 Accept: application/json
@@ -267,7 +267,7 @@ Accept: application/json
 %}
 
 ### 3.1 Получение списка согласий текущего пользователя (Позитивный сценарий)
-GET {{host}}/api/documents/consents
+GET {{host}}/api/document/consents
 Authorization: Bearer {{auth_token}}
 Accept: application/json
 
@@ -278,7 +278,7 @@ Accept: application/json
 %}
 
 ### 3.2 Получение списка согласий: Запрос БЕЗ токена авторизации (401)
-GET {{host}}/api/documents/consents
+GET {{host}}/api/document/consents
 Accept: application/json
 
 > {%
@@ -288,7 +288,7 @@ Accept: application/json
 %}
 
 ### 3.3 Получение списка согласий: Поддельный токен авторизации (401)
-GET {{host}}/api/documents/consents
+GET {{host}}/api/document/consents
 Authorization: Bearer fake_invalid_jwt_token
 Accept: application/json
 
@@ -299,7 +299,7 @@ Accept: application/json
 %}
 
 ### 4.1 Получение согласия по ID документа (Позитивный сценарий)
-GET {{host}}/api/documents/consents/3
+GET {{host}}/api/document/consents/3
 Authorization: Bearer {{auth_token}}
 Accept: application/json
 
@@ -310,7 +310,7 @@ Accept: application/json
 %}
 
 ### 4.2 Получение согласия по ID документа: Запрос БЕЗ токена авторизации (401)
-GET {{host}}/api/documents/consents/3
+GET {{host}}/api/document/consents/3
 Accept: application/json
 
 > {%
@@ -320,7 +320,7 @@ Accept: application/json
 %}
 
 ### 4.3 Получение согласия по ID документа: Поддельный токен авторизации (401)
-GET {{host}}/api/documents/consents/3
+GET {{host}}/api/document/consents/3
 Authorization: Bearer fake_invalid_jwt_token
 Accept: application/json
 
@@ -331,7 +331,7 @@ Accept: application/json
 %}
 
 ### 4.4 Получение согласия для документа без согласия / несуществующего документа (404)
-GET {{host}}/api/documents/consents/999999999
+GET {{host}}/api/document/consents/999999999
 Authorization: Bearer {{auth_token}}
 Accept: application/json
 
@@ -342,7 +342,7 @@ Accept: application/json
 %}
 
 ### 4.5 Получение согласия по нулевому ID документа (0)
-GET {{host}}/api/documents/consents/0
+GET {{host}}/api/document/consents/0
 Authorization: Bearer {{auth_token}}
 Accept: application/json
 
@@ -353,7 +353,7 @@ Accept: application/json
 %}
 
 ### 4.6 Получение согласия по отрицательному ID документа (-1)
-GET {{host}}/api/documents/consents/-1
+GET {{host}}/api/document/consents/-1
 Authorization: Bearer {{auth_token}}
 Accept: application/json
 
@@ -364,7 +364,7 @@ Accept: application/json
 %}
 
 ### 4.7 Получение согласия по нечисловому ID документа (строка)
-GET {{host}}/api/documents/consents/invalid_id
+GET {{host}}/api/document/consents/invalid_id
 Authorization: Bearer {{auth_token}}
 Accept: application/json
 
