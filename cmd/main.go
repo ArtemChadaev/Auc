@@ -22,6 +22,14 @@ import (
 	"github.com/justinas/alice"
 )
 
+// @title Auction API
+// @version 1.0
+// @description REST API документация платформы аукциона Auction.
+//
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Введите токен авторизации в формате: Bearer {token}
 func main() {
 	// logger
 	logger.Init()

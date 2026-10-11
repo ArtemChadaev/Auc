@@ -34,6 +34,15 @@ func NewHandler(service service) *Handler {
 	return &Handler{service: service}
 }
 
+// @Summary Получить список документов
+// @Description Возвращает список активных документов или один активный документ по query-параметру name
+// @Tags document
+// @Produce json
+// @Param name query string false "Название документа"
+// @Success 200 {object} httpx.Response{data=[]Document}
+// @Failure 404 {object} httpx.Response "Документ не найден"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/document/ [get]
 func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request) {
 	if name := strings.TrimSpace(r.URL.Query().Get("name")); name != "" {
 		doc, err := h.service.GetActiveDocumentByName(r.Context(), name)
@@ -59,6 +68,16 @@ func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK, Data: docs})
 }
 
+// @Summary Получить документ по ID
+// @Description Возвращает документ по его числовому идентификатору
+// @Tags document
+// @Produce json
+// @Param id path int true "ID документа"
+// @Success 200 {object} httpx.Response{data=Document}
+// @Failure 400 {object} httpx.Response "Неверный ID документа"
+// @Failure 404 {object} httpx.Response "Документ не найден"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/document/{id} [get]
 func (h *Handler) getDocumentByID(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -86,6 +105,15 @@ func (h *Handler) getDocumentByID(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK, Data: doc})
 }
 
+// @Summary Получить активный документ по названию
+// @Description Возвращает актуальную версию документа по его названию
+// @Tags document
+// @Produce json
+// @Param name path string true "Название документа"
+// @Success 200 {object} httpx.Response{data=Document}
+// @Failure 404 {object} httpx.Response "Документ не найден"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/document/name/{name} [get]
 func (h *Handler) getActiveDocumentByName(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
@@ -108,6 +136,23 @@ func (h *Handler) getActiveDocumentByName(w http.ResponseWriter, r *http.Request
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK, Data: doc})
 }
 
+type consentReq struct {
+	DocumentID int64 `json:"document_id"`
+}
+
+// @Summary Дать согласие с документом
+// @Description Фиксирует согласие текущего пользователя с документом
+// @Tags document
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body consentReq true "ID документа"
+// @Success 201 {object} httpx.Response{data=UserConsent}
+// @Failure 400 {object} httpx.Response "Неверный ID документа"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 404 {object} httpx.Response "Документ не найден"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/document/consents [post]
 func (h *Handler) createConsent(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
@@ -116,9 +161,7 @@ func (h *Handler) createConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := httpx.DecodeJSON[struct {
-		DocumentID int64 `json:"document_id"`
-	}](w, r)
+	req, err := httpx.DecodeJSON[consentReq](w, r)
 	if err != nil {
 		apperr.Log(r.Context(), "createConsent.DecodeJSON", err)
 		return
@@ -142,6 +185,15 @@ func (h *Handler) createConsent(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusCreated, Data: consent})
 }
 
+// @Summary Получить список согласий пользователя
+// @Description Возвращает все согласия с документами для текущего авторизованного пользователя
+// @Tags document
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} httpx.Response{data=[]UserConsent}
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/document/consents [get]
 func (h *Handler) getUserConsents(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
@@ -160,6 +212,18 @@ func (h *Handler) getUserConsents(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK, Data: consents})
 }
 
+// @Summary Получить согласие по ID документа
+// @Description Проверяет и возвращает согласие текущего пользователя с конкретным документом
+// @Tags document
+// @Security BearerAuth
+// @Produce json
+// @Param id path int true "ID документа"
+// @Success 200 {object} httpx.Response{data=UserConsent}
+// @Failure 400 {object} httpx.Response "Неверный ID"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 404 {object} httpx.Response "Согласие не найдено"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/document/consents/{id} [get]
 func (h *Handler) getConsentByDocumentID(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {

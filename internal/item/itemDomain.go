@@ -52,7 +52,7 @@ type Item struct {
 	OwnerID   uuid.UUID       `db:"owner_id" json:"owner_id"`
 	S3ID      uuid.UUID       `db:"s3_id" json:"-"`
 	Type      itemType        `db:"type" json:"type"`
-	MetaData  json.RawMessage `db:"metadata" json:"metadata"`
+	MetaData  json.RawMessage `db:"metadata" json:"metadata" swaggertype:"object"`
 	CreatedAt time.Time       `db:"created_at" json:"created_at"`
 }
 

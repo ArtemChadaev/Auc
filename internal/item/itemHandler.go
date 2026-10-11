@@ -37,9 +37,33 @@ func NewHandler(service service) *Handler {
 	}
 }
 
+type uploadURLReq struct {
+	FileSize  int64  `json:"file_size"`
+	Sha256Hex string `json:"sha_256_hex"`
+	Filename  string `json:"filename"`
+}
+
+type uploadURLResp struct {
+	URL string    `json:"url"`
+	Key uuid.UUID `json:"key"`
+}
+
 // getUploadURL генерирует Presigned PUT URL для прямой загрузки файла клиентом в S3.
 //
-// Эндпоинт: POST /api/upload/url
+// @Summary Получить URL для загрузки файла
+// @Description Генерирует Presigned PUT URL для прямой загрузки файла в S3
+// @Tags upload
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body uploadURLReq true "Параметры загружаемого файла"
+// @Success 200 {object} httpx.Response{data=uploadURLResp}
+// @Failure 400 {object} httpx.Response "Неверный размер, имя или SHA-256 хеш файла"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 409 {object} httpx.Response{data=uploadURLResp} "Хеш уже существует или у пользователя уже есть активная загрузка"
+// @Failure 413 {object} httpx.Response "Превышен максимальный размер файла"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/upload/url [post]
 func (h *Handler) getUploadURL(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
@@ -48,11 +72,7 @@ func (h *Handler) getUploadURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := httpx.DecodeJSON[struct {
-		FileSize  int64  `json:"file_size"`
-		Sha256Hex string `json:"sha_256_hex"`
-		Filename  string `json:"filename"`
-	}](w, r)
+	req, err := httpx.DecodeJSON[uploadURLReq](w, r)
 	if err != nil {
 		return
 	}
@@ -123,7 +143,16 @@ func (h *Handler) getUploadURL(w http.ResponseWriter, r *http.Request) {
 
 // cancelUpload отменяет активную загрузку пользователя, удаляет временный файл из S3 и освобождает слот.
 //
-// Эндпоинт: POST /api/upload/cancel
+// @Summary Отменить загрузку файла
+// @Description Отменяет активную загрузку пользователя, удаляет временный файл из S3 и освобождает слот
+// @Tags upload
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} httpx.Response
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 429 {object} httpx.Response "Превышен лимит отмен"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/upload/cancel [post]
 func (h *Handler) cancelUpload(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
@@ -145,12 +174,32 @@ func (h *Handler) cancelUpload(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK})
 }
 
+type confirmUploadReq struct {
+	Key uuid.UUID `json:"key"`
+}
+
+type confirmUploadResp struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
 // confirmUpload вызывается после успешной заливки файла в S3 для мгновенной проверки «капли» и старта фонового парсинга.
 //
-// Эндпоинт: POST /api/upload/confirm
-// Ключ загрузки можно передать:
-//   - В заголовке: X-Upload-Key: <uuid>
-//   - ИЛИ в теле JSON: { "key": "<uuid>" }
+// @Summary Подтвердить загрузку файла
+// @Description Подтверждает успешную загрузку файла в S3 для проверки и старта фонового парсинга. Ключ можно передать в заголовке X-Upload-Key или в теле JSON
+// @Tags upload
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param X-Upload-Key header string false "UUID ключ загрузки"
+// @Param input body confirmUploadReq false "UUID ключ загрузки в теле"
+// @Success 202 {object} httpx.Response{data=confirmUploadResp}
+// @Failure 400 {object} httpx.Response "Неверный или отсутствующий ключ загрузки / ошибка валидации файла"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 403 {object} httpx.Response "Доступ запрещен"
+// @Failure 404 {object} httpx.Response "Загрузка не найдена"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/upload/confirm [post]
 func (h *Handler) confirmUpload(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
@@ -169,9 +218,7 @@ func (h *Handler) confirmUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if key == uuid.Nil() {
-		req, err := httpx.DecodeJSON[struct {
-			Key uuid.UUID `json:"key"`
-		}](w, r)
+		req, err := httpx.DecodeJSON[confirmUploadReq](w, r)
 		if err != nil {
 			return
 		}
@@ -221,12 +268,20 @@ func (h *Handler) confirmUpload(w http.ResponseWriter, r *http.Request) {
 
 // getUploadStatus проверяет текущий статус обработки файла.
 //
-// Эндпоинт: GET /api/upload/status?key=<uuid>
-// Ответы:
-//   - 200 OK: файл в процессе ("pending", "processing") без data и error
-//   - 201 Created: файл обработан ("completed"), в Data возвращается Item
-//   - 400 / 500: ошибка обработки ("failed"), в Error возвращается текст ошибки
-//   - 410 Gone: файл отменен ("cancelled")
+// @Summary Получить статус обработки файла
+// @Description Проверяет текущий статус обработки файла по ключу загрузки
+// @Tags upload
+// @Security BearerAuth
+// @Produce json
+// @Param key query string true "UUID ключ загрузки"
+// @Success 200 {object} httpx.Response "Файл в процессе обработки (pending, processing)"
+// @Success 201 {object} httpx.Response{data=Item} "Файл успешно обработан"
+// @Failure 400 {object} httpx.Response "Неверный UUID ключа или несовпадение хеша"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 404 {object} httpx.Response "Загрузка не найдена"
+// @Failure 410 {object} httpx.Response "Загрузка отменена"
+// @Failure 500 {object} httpx.Response "Ошибка обработки файла или внутренняя ошибка"
+// @Router /api/upload/status [get]
 func (h *Handler) getUploadStatus(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
@@ -299,9 +354,26 @@ func (h *Handler) getUploadStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type downloadURLResp struct {
+	URL string `json:"url"`
+}
+
 // getDownloadURL возвращает Presigned GET URL для скачивания файла владельцем (не более 1 раза в день).
 //
-// Эндпоинт: GET /api/item/{id}/download
+// @Summary Получить URL для скачивания предмета
+// @Description Возвращает Presigned GET URL для скачивания файла владельцем (не более 1 раза в день)
+// @Tags item
+// @Security BearerAuth
+// @Produce json
+// @Param id path int true "ID предмета"
+// @Success 200 {object} httpx.Response{data=downloadURLResp}
+// @Failure 400 {object} httpx.Response "Неверный ID предмета"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 403 {object} httpx.Response "Доступ запрещен"
+// @Failure 404 {object} httpx.Response "Предмет не найден"
+// @Failure 429 {object} httpx.Response "Превышен суточный лимит скачиваний"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/item/{id}/download [get]
 func (h *Handler) getDownloadURL(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
@@ -341,8 +413,8 @@ func (h *Handler) getDownloadURL(w http.ResponseWriter, r *http.Request) {
 
 	httpx.WriteResponse(w, httpx.Response{
 		Code: http.StatusOK,
-		Data: map[string]string{
-			"url": url,
+		Data: downloadURLResp{
+			URL: url,
 		},
 	})
 }
@@ -363,13 +435,28 @@ func (h *Handler) RouterItem() http.Handler {
 	return mux
 }
 
+type giftItemReq struct {
+	NewOwner    uuid.UUID `json:"new_owner"`
+	ItemID      int64     `json:"item_id"`
+	Description string    `json:"description"`
+}
+
 // giftItem передача предмета в подарок другому пользователю
+//
+// @Summary Передать предмет в подарок
+// @Description Передает предмет новому владельцу с сохранением истории передачи
+// @Tags item
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body giftItemReq true "Параметры подарка"
+// @Success 202 {object} httpx.Response
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 404 {object} httpx.Response "Предмет не найден"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/item/gift [post]
 func (h *Handler) giftItem(w http.ResponseWriter, r *http.Request) {
-	req, err := httpx.DecodeJSON[struct {
-		NewOwner    uuid.UUID `json:"new_owner"`
-		ItemID      int64     `json:"item_id"`
-		Description string    `json:"description"`
-	}](w, r)
+	req, err := httpx.DecodeJSON[giftItemReq](w, r)
 	if err != nil {
 		apperr.Log(r.Context(), "", err)
 		return

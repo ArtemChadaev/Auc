@@ -46,6 +46,22 @@ func (h *Handler) Routes() http.Handler {
 	return mux
 }
 
+// @Summary Получить список лотов
+// @Description Возвращает список лотов аукциона с фильтрацией, сортировкой и пагинацией
+// @Tags lot
+// @Produce json
+// @Param q query string false "Поисковый запрос"
+// @Param search query string false "Алиас для поискового запроса"
+// @Param category query string false "Категория лота"
+// @Param status query string false "Статус лота (draft, pending_review, approved, active, rejected, finished, cancelled)"
+// @Param sort query string false "Сортировка (price_asc, price_desc, ending_soon, popular, newest)"
+// @Param min_price query int false "Минимальная цена"
+// @Param max_price query int false "Максимальная цена"
+// @Param page query int false "Номер страницы (по умолчанию 1)"
+// @Param limit query int false "Лимит на страницу (по умолчанию 20, максимум 100)"
+// @Success 200 {object} httpx.Response{data=LotListResponse}
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/lot/ [get]
 func (h *Handler) listLots(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
@@ -188,6 +204,15 @@ func (h *Handler) listLots(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// @Summary Получить лот по ID
+// @Description Возвращает детальную информацию о лоте аукциона
+// @Tags lot
+// @Produce json
+// @Param id path int true "ID лота"
+// @Success 200 {object} httpx.Response{data=Lot}
+// @Failure 400 {object} httpx.Response "Неверный ID лота"
+// @Failure 404 {object} httpx.Response "Лот не найден"
+// @Router /api/lot/{id} [get]
 func (h *Handler) getLotByID(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)

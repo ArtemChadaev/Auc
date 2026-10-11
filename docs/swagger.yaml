@@ -1,0 +1,1218 @@
+definitions:
+  documents.Document:
+    properties:
+      id:
+        type: integer
+      is_major:
+        type: boolean
+      name:
+        type: string
+      published_at:
+        type: string
+      superseded_at:
+        type: string
+      text:
+        type: string
+      version:
+        type: string
+    type: object
+  documents.UserConsent:
+    properties:
+      created_at:
+        type: string
+      document_id:
+        type: integer
+      user_id:
+        type: string
+    type: object
+  documents.consentReq:
+    properties:
+      document_id:
+        type: integer
+    type: object
+  httpx.Response:
+    properties:
+      data: {}
+      error:
+        type: string
+    type: object
+  item.Item:
+    properties:
+      created_at:
+        type: string
+      creator_id:
+        type: string
+      id:
+        type: integer
+      metadata:
+        type: object
+      owner_id:
+        type: string
+      type:
+        type: string
+    type: object
+  item.confirmUploadReq:
+    properties:
+      key:
+        type: string
+    type: object
+  item.confirmUploadResp:
+    properties:
+      message:
+        type: string
+      status:
+        type: string
+    type: object
+  item.downloadURLResp:
+    properties:
+      url:
+        type: string
+    type: object
+  item.giftItemReq:
+    properties:
+      description:
+        type: string
+      item_id:
+        type: integer
+      new_owner:
+        type: string
+    type: object
+  item.uploadURLReq:
+    properties:
+      file_size:
+        type: integer
+      filename:
+        type: string
+      sha_256_hex:
+        type: string
+    type: object
+  item.uploadURLResp:
+    properties:
+      key:
+        type: string
+      url:
+        type: string
+    type: object
+  lot.ItemSummary:
+    properties:
+      blur_hash:
+        type: string
+      id:
+        type: integer
+      preview:
+        type: string
+      type:
+        type: string
+    type: object
+  lot.Lot:
+    properties:
+      bids_count:
+        type: integer
+      category:
+        type: string
+      created_at:
+        type: string
+      current_bid:
+        type: integer
+      description:
+        $ref: '#/definitions/lot.LotDescription'
+      ends_at:
+        type: string
+      finish_amount:
+        type: integer
+      finished_at:
+        type: string
+      id:
+        type: integer
+      item_id:
+        type: integer
+      item_summary:
+        $ref: '#/definitions/lot.ItemSummary'
+      min_step:
+        type: integer
+      seller:
+        $ref: '#/definitions/lot.SellerInfo'
+      seller_id:
+        type: string
+      start_amount:
+        type: integer
+      started_at:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
+      winner:
+        $ref: '#/definitions/lot.WinnerInfo'
+    type: object
+  lot.LotDescription:
+    properties:
+      attributes:
+        additionalProperties:
+          type: string
+        type: object
+      media:
+        items:
+          $ref: '#/definitions/lot.MediaItem'
+        type: array
+      short_text:
+        type: string
+      text:
+        type: string
+    type: object
+  lot.LotListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/lot.Lot'
+        type: array
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  lot.MediaItem:
+    properties:
+      blur_hash:
+        type: string
+      caption:
+        type: string
+      duration_sec:
+        type: number
+      height:
+        type: integer
+      id:
+        type: string
+      order:
+        type: integer
+      thumbnail_id:
+        type: string
+      type:
+        $ref: '#/definitions/lot.MediaType'
+      width:
+        type: integer
+    type: object
+  lot.MediaType:
+    enum:
+    - image
+    - video
+    - 3d
+    type: string
+    x-enum-varnames:
+    - MediaTypeImage
+    - MediaTypeVideo
+    - MediaType3D
+  lot.SellerInfo:
+    properties:
+      avatar_id:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      rating:
+        type: number
+    type: object
+  lot.WinnerInfo:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  user.Device:
+    properties:
+      browser:
+        type: string
+      os:
+        type: string
+    type: object
+  user.Session:
+    properties:
+      created_at:
+        type: string
+      device:
+        $ref: '#/definitions/user.Device'
+      expires_at:
+        type: string
+      refresh_id:
+        type: integer
+      revoked_at:
+        type: string
+    type: object
+  user.User:
+    properties:
+      avatar_id:
+        type: string
+      balance:
+        type: integer
+      created_at:
+        type: string
+      deleted_at:
+        type: string
+      email:
+        type: string
+      hold:
+        type: integer
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  user.avatarResp:
+    properties:
+      image:
+        type: string
+    type: object
+  user.findRefreshReq:
+    properties:
+      current:
+        type: boolean
+    type: object
+  user.newNameReq:
+    properties:
+      name:
+        type: string
+    type: object
+  user.refreshIdReq:
+    properties:
+      refresh_id:
+        items:
+          type: integer
+        type: array
+    type: object
+  user.registerReq:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+      password:
+        type: string
+      uid:
+        type: string
+    type: object
+  user.tokenResponds:
+    properties:
+      access_token:
+        type: string
+      refresh_session:
+        $ref: '#/definitions/user.Session'
+    type: object
+  user.userReq:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: REST API документация платформы аукциона Auction.
+  title: Auction API
+  version: "1.0"
+paths:
+  /api/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Аутентификация пользователя по email и паролю, возвращает access
+        и refresh токены
+      parameters:
+      - description: Учетные данные пользователя
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/user.userReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/user.tokenResponds'
+              type: object
+        "401":
+          description: Неверный email или пароль
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      summary: Авторизация пользователя
+      tags:
+      - auth
+  /api/auth/logout:
+    post:
+      consumes:
+      - application/json
+      description: Завершает указанные refresh-сессии пользователя. Требует авторизации
+      parameters:
+      - description: ID сессий для завершения
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/user.refreshIdReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Выход из системы
+      tags:
+      - auth
+  /api/auth/refresh:
+    post:
+      description: Обновляет access токен с использованием refresh_token cookie
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/user.tokenResponds'
+              type: object
+        "401":
+          description: Отсутствует или невалидный cookie
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Сессия не найдена
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      summary: Обновление токенов
+      tags:
+      - auth
+  /api/auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Создает новый аккаунт пользователя и возвращает токены
+      parameters:
+      - description: Регистрационные данные
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/user.registerReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/user.tokenResponds'
+              type: object
+        "409":
+          description: Email уже занят
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      summary: Регистрация пользователя
+      tags:
+      - auth
+  /api/auth/session:
+    post:
+      consumes:
+      - application/json
+      description: Возвращает список сессий пользователя (текущих или всех). Требует
+        авторизации
+      parameters:
+      - description: Фильтр сессий
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/user.findRefreshReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/user.Session'
+                  type: array
+              type: object
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Сессии не найдены
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Получение сессий пользователя
+      tags:
+      - auth
+  /api/document/:
+    get:
+      description: Возвращает список активных документов или один активный документ
+        по query-параметру name
+      parameters:
+      - description: Название документа
+        in: query
+        name: name
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/documents.Document'
+                  type: array
+              type: object
+        "404":
+          description: Документ не найден
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      summary: Получить список документов
+      tags:
+      - document
+  /api/document/{id}:
+    get:
+      description: Возвращает документ по его числовому идентификатору
+      parameters:
+      - description: ID документа
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/documents.Document'
+              type: object
+        "400":
+          description: Неверный ID документа
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Документ не найден
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      summary: Получить документ по ID
+      tags:
+      - document
+  /api/document/consents:
+    get:
+      description: Возвращает все согласия с документами для текущего авторизованного
+        пользователя
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/documents.UserConsent'
+                  type: array
+              type: object
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Получить список согласий пользователя
+      tags:
+      - document
+    post:
+      consumes:
+      - application/json
+      description: Фиксирует согласие текущего пользователя с документом
+      parameters:
+      - description: ID документа
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/documents.consentReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/documents.UserConsent'
+              type: object
+        "400":
+          description: Неверный ID документа
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Документ не найден
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Дать согласие с документом
+      tags:
+      - document
+  /api/document/consents/{id}:
+    get:
+      description: Проверяет и возвращает согласие текущего пользователя с конкретным
+        документом
+      parameters:
+      - description: ID документа
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/documents.UserConsent'
+              type: object
+        "400":
+          description: Неверный ID
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Согласие не найдено
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Получить согласие по ID документа
+      tags:
+      - document
+  /api/document/name/{name}:
+    get:
+      description: Возвращает актуальную версию документа по его названию
+      parameters:
+      - description: Название документа
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/documents.Document'
+              type: object
+        "404":
+          description: Документ не найден
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      summary: Получить активный документ по названию
+      tags:
+      - document
+  /api/item/{id}/download:
+    get:
+      description: Возвращает Presigned GET URL для скачивания файла владельцем (не
+        более 1 раза в день)
+      parameters:
+      - description: ID предмета
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/item.downloadURLResp'
+              type: object
+        "400":
+          description: Неверный ID предмета
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "403":
+          description: Доступ запрещен
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Предмет не найден
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "429":
+          description: Превышен суточный лимит скачиваний
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Получить URL для скачивания предмета
+      tags:
+      - item
+  /api/item/gift:
+    post:
+      consumes:
+      - application/json
+      description: Передает предмет новому владельцу с сохранением истории передачи
+      parameters:
+      - description: Параметры подарка
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/item.giftItemReq'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Предмет не найден
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Передать предмет в подарок
+      tags:
+      - item
+  /api/lot/:
+    get:
+      description: Возвращает список лотов аукциона с фильтрацией, сортировкой и пагинацией
+      parameters:
+      - description: Поисковый запрос
+        in: query
+        name: q
+        type: string
+      - description: Алиас для поискового запроса
+        in: query
+        name: search
+        type: string
+      - description: Категория лота
+        in: query
+        name: category
+        type: string
+      - description: Статус лота (draft, pending_review, approved, active, rejected,
+          finished, cancelled)
+        in: query
+        name: status
+        type: string
+      - description: Сортировка (price_asc, price_desc, ending_soon, popular, newest)
+        in: query
+        name: sort
+        type: string
+      - description: Минимальная цена
+        in: query
+        name: min_price
+        type: integer
+      - description: Максимальная цена
+        in: query
+        name: max_price
+        type: integer
+      - description: Номер страницы (по умолчанию 1)
+        in: query
+        name: page
+        type: integer
+      - description: Лимит на страницу (по умолчанию 20, максимум 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/lot.LotListResponse'
+              type: object
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      summary: Получить список лотов
+      tags:
+      - lot
+  /api/lot/{id}:
+    get:
+      description: Возвращает детальную информацию о лоте аукциона
+      parameters:
+      - description: ID лота
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/lot.Lot'
+              type: object
+        "400":
+          description: Неверный ID лота
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Лот не найден
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      summary: Получить лот по ID
+      tags:
+      - lot
+  /api/upload/cancel:
+    post:
+      description: Отменяет активную загрузку пользователя, удаляет временный файл
+        из S3 и освобождает слот
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "429":
+          description: Превышен лимит отмен
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Отменить загрузку файла
+      tags:
+      - upload
+  /api/upload/confirm:
+    post:
+      consumes:
+      - application/json
+      description: Подтверждает успешную загрузку файла в S3 для проверки и старта
+        фонового парсинга. Ключ можно передать в заголовке X-Upload-Key или в теле
+        JSON
+      parameters:
+      - description: UUID ключ загрузки
+        in: header
+        name: X-Upload-Key
+        type: string
+      - description: UUID ключ загрузки в теле
+        in: body
+        name: input
+        schema:
+          $ref: '#/definitions/item.confirmUploadReq'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/item.confirmUploadResp'
+              type: object
+        "400":
+          description: Неверный или отсутствующий ключ загрузки / ошибка валидации
+            файла
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "403":
+          description: Доступ запрещен
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Загрузка не найдена
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Подтвердить загрузку файла
+      tags:
+      - upload
+  /api/upload/status:
+    get:
+      description: Проверяет текущий статус обработки файла по ключу загрузки
+      parameters:
+      - description: UUID ключ загрузки
+        in: query
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Файл в процессе обработки (pending, processing)
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "201":
+          description: Файл успешно обработан
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/item.Item'
+              type: object
+        "400":
+          description: Неверный UUID ключа или несовпадение хеша
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Загрузка не найдена
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "410":
+          description: Загрузка отменена
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Ошибка обработки файла или внутренняя ошибка
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Получить статус обработки файла
+      tags:
+      - upload
+  /api/upload/url:
+    post:
+      consumes:
+      - application/json
+      description: Генерирует Presigned PUT URL для прямой загрузки файла в S3
+      parameters:
+      - description: Параметры загружаемого файла
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/item.uploadURLReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/item.uploadURLResp'
+              type: object
+        "400":
+          description: Неверный размер, имя или SHA-256 хеш файла
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "409":
+          description: Хеш уже существует или у пользователя уже есть активная загрузка
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/item.uploadURLResp'
+              type: object
+        "413":
+          description: Превышен максимальный размер файла
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Получить URL для загрузки файла
+      tags:
+      - upload
+  /api/user/me:
+    delete:
+      description: Выполняет мягкое удаление профиля текущего пользователя
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Удалить профиль пользователя
+      tags:
+      - user
+    get:
+      description: Возвращает данные текущего авторизованного пользователя
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/user.User'
+              type: object
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Получить профиль пользователя
+      tags:
+      - user
+  /api/user/me/avatar:
+    put:
+      consumes:
+      - multipart/form-data
+      description: Загружает и устанавливает квадратный аватар пользователя
+      parameters:
+      - description: Файл изображения аватара (квадратный)
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/user.avatarResp'
+              type: object
+        "400":
+          description: Неверный формат или пропорции изображения
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Пользователь не найден
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "413":
+          description: Превышен допустимый размер файла
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Обновить аватар пользователя
+      tags:
+      - user
+  /api/user/name:
+    patch:
+      consumes:
+      - application/json
+      description: Изменяет отображаемое имя текущего пользователя
+      parameters:
+      - description: Новое имя пользователя
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/user.newNameReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Обновить имя пользователя
+      tags:
+      - user
+securityDefinitions:
+  BearerAuth:
+    description: 'Введите токен авторизации в формате: Bearer {token}'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

@@ -50,6 +50,16 @@ type userReq struct {
 	Pass  string `json:"password"`
 }
 
+// @Summary Авторизация пользователя
+// @Description Аутентификация пользователя по email и паролю, возвращает access и refresh токены
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param input body userReq true "Учетные данные пользователя"
+// @Success 200 {object} httpx.Response{data=tokenResponds}
+// @Failure 401 {object} httpx.Response "Неверный email или пароль"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/auth/login [post]
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	req, err := httpx.DecodeJSON[userReq](w, r)
 	if err != nil {
@@ -104,6 +114,16 @@ type registerReq struct {
 	Pass  string     `json:"password"`
 }
 
+// @Summary Регистрация пользователя
+// @Description Создает новый аккаунт пользователя и возвращает токены
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param input body registerReq true "Регистрационные данные"
+// @Success 200 {object} httpx.Response{data=tokenResponds}
+// @Failure 409 {object} httpx.Response "Email уже занят"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/auth/register [post]
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	req, err := httpx.DecodeJSON[registerReq](w, r)
 	if err != nil {
@@ -154,6 +174,17 @@ type refreshIdReq struct {
 	ID []int64 `json:"refresh_id"`
 }
 
+// @Summary Выход из системы
+// @Description Завершает указанные refresh-сессии пользователя. Требует авторизации
+// @Tags auth
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body refreshIdReq true "ID сессий для завершения"
+// @Success 200 {object} httpx.Response
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/auth/logout [post]
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	req, err := httpx.DecodeJSON[refreshIdReq](w, r)
 	if err != nil {
@@ -181,6 +212,18 @@ type findRefreshReq struct {
 	Current *bool `json:"current,omitempty"`
 }
 
+// @Summary Получение сессий пользователя
+// @Description Возвращает список сессий пользователя (текущих или всех). Требует авторизации
+// @Tags auth
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body findRefreshReq true "Фильтр сессий"
+// @Success 200 {object} httpx.Response{data=[]Session}
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 404 {object} httpx.Response "Сессии не найдены"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/auth/session [post]
 func (h *Handler) findRefresh(w http.ResponseWriter, r *http.Request) {
 	req, err := httpx.DecodeJSON[findRefreshReq](w, r)
 	if err != nil {
@@ -217,6 +260,15 @@ func (h *Handler) findRefresh(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// @Summary Обновление токенов
+// @Description Обновляет access токен с использованием refresh_token cookie
+// @Tags auth
+// @Produce json
+// @Success 200 {object} httpx.Response{data=tokenResponds}
+// @Failure 401 {object} httpx.Response "Отсутствует или невалидный cookie"
+// @Failure 404 {object} httpx.Response "Сессия не найдена"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/auth/refresh [post]
 func (h *Handler) loginToken(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("refresh_token")
 	if err != nil {
@@ -275,6 +327,15 @@ func (h *Handler) RoutesAuth(authChain alice.Chain) http.Handler {
 	return mux
 }
 
+// @Summary Получить профиль пользователя
+// @Description Возвращает данные текущего авторизованного пользователя
+// @Tags user
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} httpx.Response{data=User}
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/user/me [get]
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
@@ -295,6 +356,17 @@ type newNameReq struct {
 	Name string `json:"name"`
 }
 
+// @Summary Обновить имя пользователя
+// @Description Изменяет отображаемое имя текущего пользователя
+// @Tags user
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body newNameReq true "Новое имя пользователя"
+// @Success 200 {object} httpx.Response
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/user/name [patch]
 func (h *Handler) patchUserName(w http.ResponseWriter, r *http.Request) {
 	req, err := httpx.DecodeJSON[newNameReq](w, r)
 	if err != nil {
@@ -317,6 +389,15 @@ func (h *Handler) patchUserName(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK})
 }
 
+// @Summary Удалить профиль пользователя
+// @Description Выполняет мягкое удаление профиля текущего пользователя
+// @Tags user
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} httpx.Response
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/user/me [delete]
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
@@ -333,9 +414,26 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK})
 }
 
+type avatarResp struct {
+	Image uuid.UUID `json:"image"`
+}
+
 // updateAvatar обновляет или устанавливает аватар пользователя.
 //
-// Эндпоинт: PUT /me/avatar (под /api/user/)
+// @Summary Обновить аватар пользователя
+// @Description Загружает и устанавливает квадратный аватар пользователя
+// @Tags user
+// @Security BearerAuth
+// @Accept multipart/form-data
+// @Produce json
+// @Param file formData file true "Файл изображения аватара (квадратный)"
+// @Success 200 {object} httpx.Response{data=avatarResp}
+// @Failure 400 {object} httpx.Response "Неверный формат или пропорции изображения"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 404 {object} httpx.Response "Пользователь не найден"
+// @Failure 413 {object} httpx.Response "Превышен допустимый размер файла"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/user/me/avatar [put]
 func (h *Handler) updateAvatar(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
