@@ -5,17 +5,8 @@ import (
 	"net/textproto"
 	"time"
 	"uuid"
-)
 
-type itemType string
-
-var (
-	Image    itemType = "image"
-	Model3D  itemType = "3d"
-	Audio    itemType = "audio"
-	Video    itemType = "video"
-	Document itemType = "document"
-	Archive  itemType = "archive"
+	"github.com/ArtemChadaev/Auction/cmd/mimeType"
 )
 
 // Каноничное расширение от mtype.Extension() -> разрешенные синонимы
@@ -47,13 +38,13 @@ var extensionAliases = map[string][]string{
 }
 
 type Item struct {
-	ID        int64           `db:"id" json:"id"`
-	CreatorID uuid.UUID       `db:"creator_id" json:"creator_id"`
-	OwnerID   uuid.UUID       `db:"owner_id" json:"owner_id"`
-	S3ID      uuid.UUID       `db:"s3_id" json:"-"`
-	Type      itemType        `db:"type" json:"type"`
-	MetaData  json.RawMessage `db:"metadata" json:"metadata" swaggertype:"object"`
-	CreatedAt time.Time       `db:"created_at" json:"created_at"`
+	ID        int64             `db:"id" json:"id"`
+	CreatorID uuid.UUID         `db:"creator_id" json:"creator_id"`
+	OwnerID   uuid.UUID         `db:"owner_id" json:"owner_id"`
+	S3ID      uuid.UUID         `db:"s3_id" json:"-"`
+	Type      mimeType.ItemType `db:"type" json:"type"`
+	MetaData  json.RawMessage   `db:"metadata" json:"metadata" swaggertype:"object"`
+	CreatedAt time.Time         `db:"created_at" json:"created_at"`
 }
 
 type HistoryItem struct {

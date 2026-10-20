@@ -74,7 +74,7 @@ func mockArchiveMetadata(header headerMetadata) ArchiveMetadata {
 }
 
 // createItemMetadata генерирует моковые метаданные без ошибок
-func createItemMetadata(ctx context.Context, iType itemType, mType string, hmData headerMetadata, pr *io.PipeReader) (json.RawMessage, error) {
+func createItemMetadata(ctx context.Context, iType mimeType.ItemType, mType string, hmData headerMetadata, pr *io.PipeReader) (json.RawMessage, error) {
 	if pr != nil {
 		_, _ = io.Copy(io.Discard, pr)
 	}

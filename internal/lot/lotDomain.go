@@ -1,121 +1,66 @@
 package lot
 
 import (
+	"encoding/json"
 	"time"
 	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
+	"github.com/ArtemChadaev/Auction/cmd/mimeType"
 )
 
-// Lot status constants matching database check constraint
-const (
-	StatusDraft         = "draft"
-	StatusPendingReview = "pending_review"
-	StatusApproved      = "approved"
-	StatusActive        = "active"
-	StatusRejected      = "rejected"
-	StatusFinished      = "finished"
-	StatusCancelled     = "cancelled"
-)
-
-// MediaType specifies supported media format in lot description
-type MediaType string
-
-const (
-	MediaTypeImage MediaType = "image"
-	MediaTypeVideo MediaType = "video"
-	MediaType3D    MediaType = "3d"
-)
-
-// MediaItem represents an uploaded photo or video associated with lot description.
-// ID is a UUID pointing to the S3 stored item.
-type MediaItem struct {
-	ID          uuid.UUID  `json:"id"`
-	Type        MediaType  `json:"type"`
-	BlurHash    string     `json:"blur_hash,omitempty"`
-	Width       int        `json:"width,omitempty"`
-	Height      int        `json:"height,omitempty"`
-	DurationSec float64    `json:"duration_sec,omitempty"`
-	ThumbnailID *uuid.UUID `json:"thumbnail_id,omitempty"`
-	Order       int        `json:"order"`
-	Caption     string     `json:"caption,omitempty"`
-}
-
-// LotDescription contains full rich description, media attachments and technical specs.
-type LotDescription struct {
-	Text       string            `json:"text"`
-	ShortText  string            `json:"short_text,omitempty"`
-	Media      []MediaItem       `json:"media"`
-	Attributes map[string]string `json:"attributes,omitempty"`
-}
-
-// SellerInfo contains public information about lot seller.
-type SellerInfo struct {
-	ID       uuid.UUID  `json:"id"`
-	Name     string     `json:"name"`
-	AvatarID *uuid.UUID `json:"avatar_id,omitempty"`
-	Rating   float64    `json:"rating,omitempty"`
-}
-
-// WinnerInfo contains public information about auction winner once finished.
-type WinnerInfo struct {
-	ID   uuid.UUID `json:"id"`
-	Name string    `json:"name"`
-}
-
-// ItemSummary contains quick preview metadata of the underlying item being auctioned.
-type ItemSummary struct {
-	ID       int64     `json:"id"`
-	Type     string    `json:"type"`
-	Preview  uuid.UUID `json:"preview"`
-	BlurHash string    `json:"blur_hash,omitempty"`
-}
-
-// Lot represents the complete auction lot entity returned to clients.
-type Lot struct {
-	ID           int64          `json:"id"`
-	SellerID     uuid.UUID      `json:"seller_id"`
-	Seller       SellerInfo     `json:"seller"`
-	ItemID       int64          `json:"item_id"`
-	ItemSummary  *ItemSummary   `json:"item_summary,omitempty"`
-	Status       string         `json:"status"`
-	Category     string         `json:"category"`
-	Title        string         `json:"title"`
-	Description  LotDescription `json:"description"`
-	StartAmount  int64          `json:"start_amount"`
-	CurrentBid   int64          `json:"current_bid"`
-	MinStep      int64          `json:"min_step"`
-	FinishAmount *int64         `json:"finish_amount,omitempty"`
-	BidsCount    int            `json:"bids_count"`
-	Winner       *WinnerInfo    `json:"winner,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	StartedAt    *time.Time     `json:"started_at,omitempty"`
-	EndsAt       *time.Time     `json:"ends_at,omitempty"`
-	FinishedAt   *time.Time     `json:"finished_at,omitempty"`
-}
-
-// LotFilter describes URL query parameters for filtering and sorting lots.
-type LotFilter struct {
-	Query    string
-	Category string
-	Status   string
-	MinPrice *int64
-	MaxPrice *int64
-	Sort     string
-	Page     int
-	Limit    int
-}
-
-// LotListResponse represents paginated response returned by GET /
-type LotListResponse struct {
-	Items      []Lot `json:"items"`
-	Total      int   `json:"total"`
-	Page       int   `json:"page"`
-	Limit      int   `json:"limit"`
-	TotalPages int   `json:"total_pages"`
-}
+type Status string
 
 var (
-	ErrInvalidLotID = apperr.NewAppErrorString("invalid lot id", -4)
-	ErrLotNotFound  = apperr.NewAppErrorString("lot not found", -4)
+	Draft         Status = "draft"
+	PendingReview Status = "pending_review"
+	Approved      Status = "approved"
+	Active        Status = "active"
+	Rejected      Status = "rejected"
+	Finished      Status = "finished"
+	Cancelled     Status = "cancelled"
 )
+
+var (
+	ErrInvalidID      = apperr.NewAppErrorString("invalid lot id", -4)
+	ErrLotNotFound    = apperr.NewAppErrorString("lot not found", -4)
+	ErrLotNotApproved = apperr.NewAppErrorString("lot must be in approved status to be activated", -4)
+	ErrForbidden      = apperr.NewAppErrorString("forbidden", -4)
+	ErrInvalidReqBody = apperr.NewAppErrorString("invalid request body", -4)
+)
+
+type Lot struct {
+	ID           int64           `db:"id" json:"id"`
+	SellerID     uuid.UUID       `db:"seller_id" json:"seller_id"`
+	ItemID       int64           `db:"item_id" json:"item_id"`
+	Status       Status          `db:"status" json:"status"`
+	WinnerID     *uuid.UUID      `db:"winner_id" json:"winner_id,omitempty"`
+	StartAmount  int             `db:"start_amount" json:"start_amount"`
+	MinStep      int             `db:"min_step" json:"min_step"`
+	FinishAmount *int            `db:"finish_amount" json:"finish_amount,omitempty"`
+	Title        string          `db:"title" json:"title"`
+	Description  json.RawMessage `db:"description" json:"description,omitempty"`
+	CreatedAt    time.Time       `db:"created_at" json:"created_at"`
+	StartedAt    *time.Time      `db:"started_at" json:"started_at,omitempty"`
+	EndedAt      *time.Time      `db:"ends_at" json:"ends_at,omitempty"`
+	FinishedAt   *time.Time      `db:"finished_at" json:"finished_at,omitempty"`
+}
+
+type Description struct {
+	Type         mimeType.ItemType `json:"type,omitempty"`
+	Tags         *[25]string       `json:"tags,omitempty"`
+	PhotoURL     *[10]string       `json:"photo,omitempty"`
+	Text         *string           `json:"text,omitempty"`
+	ShortText    *string           `json:"short_text,omitempty"`
+	AutoActivate *bool             `json:"auto_activate,omitempty"`
+	AutoActive   *bool             `json:"auto_active,omitempty"`
+}
+
+type Bid struct {
+	Id             int64     `db:"id" json:"-"`
+	LotId          int64     `db:"lot_id" json:"lot_id"`
+	UserId         uuid.UUID `db:"user_id" json:"user_id"`
+	Amount         int       `db:"amount" json:"amount"`
+	IdempotencyKey uuid.UUID `db:"idempotency_key" json:"-"`
+	CreatedAt      time.Time `db:"created_at" json:"created_at"`
+}

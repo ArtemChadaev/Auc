@@ -367,7 +367,7 @@ func getVideoMetadata(ctx context.Context, header headerMetadata, r io.Reader) (
 }
 
 // createItemMetadata генерирует JSON метаданных в зависимости от типа файла
-func createItemMetadata(ctx context.Context, iType itemType, mType string, hmData headerMetadata, pr *io.PipeReader) (json.RawMessage, error) {
+func createItemMetadata(ctx context.Context, iType mimeType.ItemType, mType string, hmData headerMetadata, pr *io.PipeReader) (json.RawMessage, error) {
 	var metadata json.RawMessage
 	switch iType {
 	case Image:

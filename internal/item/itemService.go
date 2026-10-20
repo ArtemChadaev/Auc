@@ -7,6 +7,7 @@ import (
 	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
+	"github.com/ArtemChadaev/Auction/cmd/mimeType"
 	"github.com/ArtemChadaev/Auction/cmd/storage"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
 	"github.com/ArtemChadaev/Auction/cmd/valkey"
@@ -16,7 +17,7 @@ import (
 type repo interface {
 	withTx(tx storage.DBTX) *Repo
 	createS3(ctx context.Context, id uuid.UUID, hash string) error
-	createItem(ctx context.Context, uid uuid.UUID, s3ID uuid.UUID, iType itemType, metadata json.RawMessage) (Item, error)
+	createItem(ctx context.Context, uid uuid.UUID, s3ID uuid.UUID, iType mimeType.ItemType, metadata json.RawMessage) (Item, error)
 	getOwner(ctx context.Context, id int64) (uuid.UUID, error)
 	getOwnerForUpdate(ctx context.Context, id int64) (uuid.UUID, error)
 	newOwner(ctx context.Context, uid uuid.UUID, id int64) error

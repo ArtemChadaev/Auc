@@ -17,6 +17,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - default
   valkey:
     image: valkey/valkey:8-alpine
     restart: unless-stopped
@@ -27,15 +29,17 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - default
   caddy:
-    image: caddy:alpine
+    image: caddy:2-alpine
+    container_name: auc-caddy
     restart: unless-stopped
-    ports:
-      - "80:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    networks:
+      - caddy_net
+      - default
   go:
     image: ghcr.io/artemchadaev/auc-go:v0.1
     environment:
@@ -47,10 +51,13 @@ services:
         condition: service_healthy
     env_file:
       - .env
-
-    ports:
-      - "8080:8080"
+    networks:
+      - default
   react:
     image: ghcr.io/artemchadaev/auc-react:v0.1
-    ports:
-      - "3000:3000"
+    networks:
+      - default
+
+networks:
+  caddy_net:
+    external: true

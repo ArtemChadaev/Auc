@@ -494,12 +494,12 @@ func (h *Handler) updateAvatar(w http.ResponseWriter, r *http.Request) {
 }
 
 // RoutesUser /api/user
-func (h *Handler) RoutesUser() http.Handler {
+func (h *Handler) RoutesUser(authChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /me", h.getUser)
 	mux.HandleFunc("PATCH /name", h.patchUserName)
 	mux.HandleFunc("DELETE /me", h.deleteUser)
 	mux.HandleFunc("PUT /me/avatar", h.updateAvatar)
 
-	return mux
+	return authChain.Then(mux)
 }
