@@ -24,7 +24,7 @@ func AuthAccessToken(next http.Handler) http.Handler {
 			httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
 			return
 		}
-		uid, err := user.VerifyAccessToken(parts[1])
+		uid, role, err := user.VerifyAccessToken(parts[1])
 		if err != nil {
 			if errors.Is(err, user.ErrInvalidToken) {
 				httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
@@ -36,6 +36,39 @@ func AuthAccessToken(next http.Handler) http.Handler {
 		}
 
 		ctx := context.WithValue(r.Context(), cfg.UID, uid)
+		ctx = context.WithValue(r.Context(), cfg.Role, role)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func AuthAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
+			return
+		}
+		parts := strings.SplitN(auth, " ", 2)
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
+			return
+		}
+		uid, role, err := user.VerifyAccessToken(parts[1])
+		if err != nil {
+			if errors.Is(err, user.ErrInvalidToken) {
+				httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
+			} else {
+				apperr.Log(r.Context(), "", err)
+				httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
+			}
+			return
+		}
+		if role != "admin" {
+			httpx.WriteResponse(w, httpx.ErrForbidden)
+		}
+
+		ctx := context.WithValue(r.Context(), cfg.UID, uid)
+		ctx = context.WithValue(r.Context(), cfg.Role, role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

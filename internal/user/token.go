@@ -19,10 +19,11 @@ type Tokens struct {
 	RefreshToken string
 }
 
-func generateAccessToken(email string, uid uuid.UUID) (string, error) {
+func generateAccessToken(email string, uid uuid.UUID, role string) (string, error) {
 	claims := jwt.MapClaims{
 		"iss":  cfg.Cfg.Domain,
 		"sub":  email,
+		"role": role,
 		"exp":  time.Now().Add(time.Minute * time.Duration(cfg.Cfg.ExpiredAccessToken)).Unix(),
 		"iat":  time.Now().Unix(),
 		"uuid": uid.String(),
@@ -42,7 +43,7 @@ func keyFunc() jwt.Keyfunc {
 }
 
 // VerifyAccessToken uuid, error
-func VerifyAccessToken(accessToken string) (uuid.UUID, error) {
+func VerifyAccessToken(accessToken string) (uuid.UUID, string, error) {
 	token, err := jwt.Parse(
 		accessToken,
 		keyFunc(),
@@ -50,27 +51,26 @@ func VerifyAccessToken(accessToken string) (uuid.UUID, error) {
 		jwt.WithExpirationRequired(),
 	)
 	if err != nil {
-		return uuid.Nil(), fmt.Errorf("user.VerifyAccessToken: %w", ErrInvalidToken)
+		return uuid.Nil(), "", fmt.Errorf("user.VerifyAccessToken: %w", ErrInvalidToken)
 	}
 	if !token.Valid {
-		return uuid.Nil(), fmt.Errorf("user.VerifyAccessToken: %w", ErrInvalidToken)
+		return uuid.Nil(), "", fmt.Errorf("user.VerifyAccessToken: %w", ErrInvalidToken)
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return uuid.Nil(), fmt.Errorf("user.VerifyAccessToken: %w", ErrInvalidToken)
+		return uuid.Nil(), "", fmt.Errorf("user.VerifyAccessToken: %w", ErrInvalidToken)
 	}
-
 	uid, err := uuid.Parse(claims["uuid"].(string))
 	if err != nil {
-		return uuid.Nil(), fmt.Errorf("user.VerifyAccessToken: %v", apperr.NewAppError(err, 4))
+		return uuid.Nil(), "", fmt.Errorf("user.VerifyAccessToken: %v", apperr.NewAppError(err, 4))
 	}
-	return uid, nil
+	return uid, claims["role"].(string), nil
 }
 
-func createTokens(email string, uid uuid.UUID) (Tokens, error) {
+func createTokens(email string, uid uuid.UUID, role string) (Tokens, error) {
 	var tokens Tokens
 	var err error
-	tokens.AccessToken, err = generateAccessToken(email, uid)
+	tokens.AccessToken, err = generateAccessToken(email, uid, role)
 	if err != nil {
 		return tokens, fmt.Errorf("user.createTokens: %w", err)
 	}

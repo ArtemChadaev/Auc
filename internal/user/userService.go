@@ -8,19 +8,23 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"time"
 	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
+	"github.com/ArtemChadaev/Auction/cmd/cfg"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/argon2"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
@@ -104,7 +108,7 @@ func (s *Service) register(ctx context.Context, uid *uuid.UUID, name string, ema
 		return tokens, fmt.Errorf("userService.register: %w", err)
 	}
 
-	tokens, err = createTokens(email, *uid)
+	tokens, err = createTokens(email, *uid, "user")
 	if err != nil {
 		return tokens, fmt.Errorf("userService.register: %w", err)
 	}
@@ -119,7 +123,7 @@ func (s *Service) register(ctx context.Context, uid *uuid.UUID, name string, ema
 func (s *Service) authPassword(ctx context.Context, email string, password string, device Device) (Tokens, error) {
 	var tokens Tokens
 
-	uid, passHash, err := s.repo.login(ctx, email)
+	uid, passHash, role, err := s.repo.login(ctx, email)
 	if err != nil {
 		return tokens, fmt.Errorf("userService.authPassword: %w", err)
 	}
@@ -127,7 +131,7 @@ func (s *Service) authPassword(ctx context.Context, email string, password strin
 		return tokens, fmt.Errorf("userService.authPassword: %w", err)
 	}
 
-	tokens, err = createTokens(email, uid)
+	tokens, err = createTokens(email, uid, role)
 	if err != nil {
 		return tokens, fmt.Errorf("userService.authPassword: %w", err)
 	}
@@ -151,11 +155,11 @@ func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, erro
 			return Tokens{}, fmt.Errorf("userService.authRefresh: %w", err)
 		}
 	}
-	email, err := s.repo.getEmailByID(ctx, userSession.UserID)
+	email, role, err := s.repo.getEmailRoleByID(ctx, userSession.UserID)
 	if err != nil {
 		return Tokens{}, fmt.Errorf("userService.authRefresh: %w", err)
 	}
-	accessToken, err := generateAccessToken(email, userSession.UserID)
+	accessToken, err := generateAccessToken(email, userSession.UserID, role)
 	if err != nil {
 		return Tokens{}, fmt.Errorf("userService.authRefresh: %w", err)
 	}
@@ -285,4 +289,42 @@ func (s *Service) updateAvatar(ctx context.Context, uid uuid.UUID, r io.Reader) 
 	}
 
 	return s3ID, nil
+}
+
+func (s *Service) setAdmin(ctx context.Context, uid uuid.UUID) error {
+	err := s.repo.setAdmin(ctx, uid)
+	if err != nil {
+		return fmt.Errorf("userService.setAdmin: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) checkUserByEmail(ctx context.Context, email string) (bool, error) {
+	check, err := s.repo.checkUserByEmail(ctx, email)
+	if err != nil {
+		return check, fmt.Errorf("userService.getUserByEmail: %w", err)
+	}
+	return check, nil
+}
+
+func (s *Service) CreateAdmin() error {
+	ctx := context.Background()
+	check, err := s.checkUserByEmail(ctx, cfg.Cfg.AdminEmail)
+	if check && err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("userService.CreateAdmin: %w", err)
+	}
+
+	uid := uuid.New()
+	tokens, err := s.register(ctx, &uid, "Admin", cfg.Cfg.AdminEmail, cfg.Cfg.AdminPassword, Device{})
+	if err != nil {
+		return fmt.Errorf("userService.CreateAdmin: %w", err)
+	}
+	if err = s.setAdmin(ctx, uid); err != nil {
+		return fmt.Errorf("userService.CreateAdmin: %w", err)
+	}
+	slog.Info("create new user", slog.String("uid", uid.String()), slog.Any("tokens", tokens))
+	return nil
 }

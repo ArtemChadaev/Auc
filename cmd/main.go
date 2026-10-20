@@ -16,6 +16,7 @@ import (
 	"github.com/ArtemChadaev/Auction/cmd/valkey"
 	"github.com/ArtemChadaev/Auction/internal/documents"
 	"github.com/ArtemChadaev/Auction/internal/item"
+	"github.com/ArtemChadaev/Auction/internal/lot"
 	"github.com/ArtemChadaev/Auction/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/justinas/alice"
@@ -94,19 +95,33 @@ func main() {
 	mux := http.NewServeMux()
 	globalChain := alice.New(middleware.Logger, middleware.MaxBodySize(5<<20))
 	authChain := alice.New(middleware.AuthAccessToken)
-
-	userHandler := user.NewHandler(user.NewService(user.NewRepo(pool), photosS3))
+	adminChain := alice.New(middleware.AuthAdmin)
+	// user
+	userService := user.NewService(user.NewRepo(pool), photosS3)
+	if err = userService.CreateAdmin(); err != nil {
+		slog.Error("main.user", "error", err)
+		return
+	}
+	userHandler := user.NewHandler(userService)
 	mux.Handle("/api/auth/", http.StripPrefix("/api/auth", userHandler.RoutesAuth(authChain)))
 	mux.Handle("/api/user/", http.StripPrefix("/api/user", userHandler.RoutesUser(authChain)))
 
+	// item
 	itemService := item.NewService(pool, globalS3, item.NewRepo(pool), valkeyClient)
 	go itemService.RecoverPendingUploads(ctx)
 	itemHandler := item.NewHandler(itemService)
 	mux.Handle("/api/upload/", http.StripPrefix("/api/upload", itemHandler.RouterUpload(authChain)))
 	mux.Handle("/api/item/", http.StripPrefix("/api/item", itemHandler.RouterItem(authChain)))
 
+	// doc
 	docHandler := documents.NewHandler(documents.NewService(documents.NewRepo(pool)))
 	mux.Handle("/api/document/", http.StripPrefix("/api/documents", docHandler.Routes(authChain)))
+
+	// lot
+	lotService := lot.NewService(lot.NewRepo(pool), pool)
+	//lotService.FinishLots()
+	lotHandler := lot.NewHandler(lotService)
+	mux.Handle("/api/lot/", http.StripPrefix("/api/lot", lotHandler.RouterLot(authChain, adminChain)))
 
 	srv := &http.Server{
 		Addr:              ":8080",

@@ -16,15 +16,15 @@ func NewRepo(db storage.DBTX) *Repo {
 	return &Repo{db: db}
 }
 
-func (r *Repo) login(ctx context.Context, email string) (uuid.UUID, string, error) {
+func (r *Repo) login(ctx context.Context, email string) (uuid.UUID, string, string, error) {
 	var id uuid.UUID
-	var password string
-	row := r.db.QueryRow(ctx, "SELECT id, password_hash FROM users WHERE email = lower($1) AND deleted_at IS NULL", email)
-	err := row.Scan(&id, &password)
+	var password, role string
+	row := r.db.QueryRow(ctx, "SELECT id, password_hash, role FROM users WHERE email = lower($1) AND deleted_at IS NULL", email)
+	err := row.Scan(&id, &password, &role)
 	if err != nil {
-		return id, password, fmt.Errorf("userRepo.login: %w", storage.ErrRepo(err))
+		return id, password, role, fmt.Errorf("userRepo.login: %w", storage.ErrRepo(err))
 	}
-	return id, password, nil
+	return id, password, role, nil
 }
 
 func (r *Repo) register(ctx context.Context, id uuid.UUID, name, email, password string) error {
@@ -35,14 +35,14 @@ func (r *Repo) register(ctx context.Context, id uuid.UUID, name, email, password
 	return nil
 }
 
-func (r *Repo) getEmailByID(ctx context.Context, uid uuid.UUID) (string, error) {
-	var email string
-	row := r.db.QueryRow(ctx, "SELECT email FROM users WHERE id = $1 AND deleted_at IS NULL", uid)
-	err := row.Scan(&email)
+func (r *Repo) getEmailRoleByID(ctx context.Context, uid uuid.UUID) (string, string, error) {
+	var email, role string
+	row := r.db.QueryRow(ctx, "SELECT email, role FROM users WHERE id = $1 AND deleted_at IS NULL", uid)
+	err := row.Scan(&email, &role)
 	if err != nil {
-		return "", fmt.Errorf("userRepo.getEmailByID: %w", storage.ErrRepo(err))
+		return "", "", fmt.Errorf("userRepo.getEmailByID: %w", storage.ErrRepo(err))
 	}
-	return email, nil
+	return email, role, nil
 }
 
 func (r *Repo) getUser(ctx context.Context, uid uuid.UUID) (User, error) {
@@ -100,6 +100,28 @@ func (r *Repo) updateAvatar(ctx context.Context, uid uuid.UUID, avatarID uuid.UU
 	}
 	if res.RowsAffected() == 0 {
 		return fmt.Errorf("userRepo.updateAvatar: %w", storage.ErrNotFound)
+	}
+	return nil
+}
+
+func (r *Repo) checkUserByEmail(ctx context.Context, email string) (bool, error) {
+	res, err := r.db.Exec(ctx, "SELECT 1 FROM users WHERE email = $1 AND deleted_at IS NULL", email)
+	if err != nil {
+		return false, fmt.Errorf("userRepo.getUserByEmail: %w", storage.ErrRepo(err))
+	}
+	if res.RowsAffected() == 0 {
+		return false, fmt.Errorf("userRepo.getUserByEmail: %w", storage.ErrNotFound)
+	}
+	return true, nil
+}
+
+func (r *Repo) setAdmin(ctx context.Context, uid uuid.UUID) error {
+	res, err := r.db.Exec(ctx, "UPDATE users SET role = 'admin' WHERE id = $1 AND deleted_at IS NULL", uid)
+	if err != nil {
+		return fmt.Errorf("userRepo.setAdmin: %w", storage.ErrRepo(err))
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("userRepo.setAdmin: %w", storage.ErrNotFound)
 	}
 	return nil
 }

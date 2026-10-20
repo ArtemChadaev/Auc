@@ -112,6 +112,13 @@ func (s *Service) activateLot(ctx context.Context, id int64, sellerID uuid.UUID,
 	return lot, nil
 }
 
+func (s *Service) approve(ctx context.Context, id int64) error {
+	if err := s.repo.approve(ctx, id); err != nil {
+		return fmt.Errorf("lotService.approve: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) bid(ctx context.Context, idLot int64, uid, idempotencyKey uuid.UUID, amount int) error {
 	if amount <= 0 {
 		return fmt.Errorf("lotService.bid: %w", ErrInvalidReqBody)

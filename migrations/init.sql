@@ -16,6 +16,7 @@ create table  users (
     balance int not null default 0,
     hold int not null default 0 constraint users_hold_positive check (hold >= 0),
     created_at timestamptz not null default now(),
+    role text not null default 'user' check (role in ('user', 'admin'))
     constraint users_balance_greater_hold check (balance >= hold)
 );
 

@@ -14,6 +14,7 @@ type User struct {
 	Balance   int        `db:"balance" json:"balance"`
 	Hold      int        `db:"hold" json:"hold"`
 	CreatedAt time.Time  `db:"created_at" json:"created_at"`
+	Role      string     `db:"role" json:"-"`
 }
 
 type Device struct {

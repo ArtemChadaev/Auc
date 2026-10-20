@@ -187,29 +187,6 @@ func (r *Repo) cancel(ctx context.Context, id int64, sellerId uuid.UUID) error {
 	return nil
 }
 
-//func (r *Repo) approve(ctx context.Context, id int64) (Lot, error) {
-//	rows, err := r.db.Query(ctx, `
-//		UPDATE lots
-//		SET status = CASE
-//			WHEN ((description->>'auto_activate')::boolean = true)
-//			     AND started_at IS NOT NULL AND ends_at IS NOT NULL AND started_at > now() + INTERVAL '1 hour'
-//			THEN 'active'::text
-//			ELSE 'approved'::text
-//		END
-//		WHERE id = $1 AND status = $2
-//		RETURNING *`,
-//		id, PendingReview,
-//	)
-//	if err != nil {
-//		return Lot{}, fmt.Errorf("lotRepo.approve: %w", storage.ErrRepo(err))
-//	}
-//	lot, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[Lot])
-//	if err != nil {
-//		return Lot{}, fmt.Errorf("lotRepo.approve: %w", storage.ErrRepo(err))
-//	}
-//	return lot, nil
-//}
-
 func (r *Repo) getByIdForUpdate(ctx context.Context, id int64) (Lot, error) {
 	var lot Lot
 	row, err := r.db.Query(ctx, "SELECT * FROM lots WHERE id = $1 AND status IN ($2, $3, $4, $5) FOR UPDATE", id, Approved, Active, Finished, Cancelled)
@@ -263,6 +240,27 @@ func (r *Repo) changeHold(ctx context.Context, uid uuid.UUID, changeHold int) er
 	}
 	if res.RowsAffected() == 0 {
 		return fmt.Errorf("userRepo.updateAvatar: %w", storage.ErrNotFound)
+	}
+	return nil
+}
+
+func (r *Repo) approve(ctx context.Context, id int64) error {
+	res, err := r.db.Exec(ctx, `
+		UPDATE lots
+		SET status = CASE
+			WHEN ((description->>'auto_activate')::boolean = true)
+			     AND started_at IS NOT NULL AND ends_at IS NOT NULL AND started_at > now() + INTERVAL '1 hour'
+			THEN 'active'::text
+			ELSE 'approved'::text
+		END
+		WHERE id = $1 AND status = $2`,
+		id, PendingReview,
+	)
+	if err != nil {
+		return fmt.Errorf("lotRepo.approve: %w", storage.ErrRepo(err))
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("lotRepo.approve: %w", storage.ErrNotFound)
 	}
 	return nil
 }

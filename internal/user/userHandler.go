@@ -1,7 +1,6 @@
 package user
 
 import (
-	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -17,24 +16,11 @@ import (
 	"github.com/justinas/alice"
 )
 
-type service interface {
-	register(ctx context.Context, uid *uuid.UUID, name string, email string, password string, device Device) (Tokens, error)
-	authPassword(ctx context.Context, email string, password string, device Device) (Tokens, error)
-	authRefresh(ctx context.Context, refresh string) (Tokens, error)
-	tokenResponds(ctx context.Context, refresh string) (Session, error)
-	logout(ctx context.Context, refreshId []int64, uid uuid.UUID) error
-	findTokens(ctx context.Context, uid uuid.UUID, current bool) ([]Session, error)
-	getUser(ctx context.Context, uid uuid.UUID) (User, error)
-	patchUserName(ctx context.Context, uid uuid.UUID, name string) error
-	deleteUser(ctx context.Context, uid uuid.UUID) error
-	updateAvatar(ctx context.Context, uid uuid.UUID, r io.Reader) (uuid.UUID, error)
-}
-
 type Handler struct {
-	service service
+	service *Service
 }
 
-func NewHandler(service service) *Handler {
+func NewHandler(service *Service) *Handler {
 	return &Handler{
 		service: service,
 	}

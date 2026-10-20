@@ -25,6 +25,7 @@ var (
 	ErrRespFieldIsTaken      = Response{Code: http.StatusConflict, Error: "field is taken"}
 	ErrRespInvalidReqBody    = Response{Code: http.StatusBadRequest, Error: "invalid request body"}
 	ErrRespReqEntityTooLarge = Response{Code: http.StatusRequestEntityTooLarge, Error: "request entity too large"}
+	ErrForbidden             = Response{Code: http.StatusForbidden, Error: "forbidden"}
 
 	// Upload & Items
 	ErrRespHashAlreadyExists    = Response{Code: http.StatusConflict, Error: "hash already exists"}

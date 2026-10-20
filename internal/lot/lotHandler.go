@@ -452,8 +452,22 @@ func (h *Handler) activate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) approved(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		return
+	}
+	if err = h.service.approve(r.Context(), id); err != nil {
+		apperr.Log(r.Context(), "lotHandler.approved", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+	}
+	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK})
+}
+
 // RouterLot api/lot/
-func (h *Handler) RouterLot(authChain alice.Chain) http.Handler {
+func (h *Handler) RouterLot(authChain alice.Chain, adminChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", h.list)
 	mux.HandleFunc("GET /{id}", h.getByID)
@@ -463,6 +477,8 @@ func (h *Handler) RouterLot(authChain alice.Chain) http.Handler {
 	mux.Handle("PUT /{id}", authChain.ThenFunc(h.update))
 	mux.Handle("DELETE /{id}", authChain.ThenFunc(h.delete))
 	mux.Handle("POST /{id}/activate", authChain.ThenFunc(h.activate))
+
+	mux.Handle("POST /{id}/approved", adminChain.ThenFunc(h.approved))
 	return mux
 }
 

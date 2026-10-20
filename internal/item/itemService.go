@@ -2,43 +2,24 @@ package item
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
-	"github.com/ArtemChadaev/Auction/cmd/mimeType"
-	"github.com/ArtemChadaev/Auction/cmd/storage"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
 	"github.com/ArtemChadaev/Auction/cmd/valkey"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type repo interface {
-	withTx(tx storage.DBTX) *Repo
-	createS3(ctx context.Context, id uuid.UUID, hash string) error
-	createItem(ctx context.Context, uid uuid.UUID, s3ID uuid.UUID, iType mimeType.ItemType, metadata json.RawMessage) (Item, error)
-	getOwner(ctx context.Context, id int64) (uuid.UUID, error)
-	getOwnerForUpdate(ctx context.Context, id int64) (uuid.UUID, error)
-	newOwner(ctx context.Context, uid uuid.UUID, id int64) error
-	getItem(ctx context.Context, id int64) (Item, error)
-	delete(ctx context.Context, id int64) error
-	hasHash(ctx context.Context, hash string) (bool, error)
-
-	newHistory(ctx context.Context, itemID int64, oldUser, newUser uuid.UUID, lotID *int64, description *string) error
-	listHistoryByItemID(ctx context.Context, itemID int64) ([]HistoryItem, error)
-	listHistoryByUserID(ctx context.Context, uid uuid.UUID) ([]HistoryItem, error)
-}
-
 type Service struct {
 	pool      *pgxpool.Pool
 	s3        *storageS3.Client
-	repo      repo
+	repo      *Repo
 	valkey    *valkey.Client
 	uploadSem chan struct{}
 }
 
-func NewService(pool *pgxpool.Pool, s3 *storageS3.Client, repo repo, valkeyClient *valkey.Client) *Service {
+func NewService(pool *pgxpool.Pool, s3 *storageS3.Client, repo *Repo, valkeyClient *valkey.Client) *Service {
 	return &Service{
 		pool:      pool,
 		s3:        s3,

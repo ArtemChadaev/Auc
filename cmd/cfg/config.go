@@ -25,6 +25,10 @@ type config struct {
 	PhotosAucAccessKey string `env:"PHOTOS_ACCESS_KEY,required,notEmpty"`
 	PhotosSecretKey    string `env:"PHOTOS_SECRET_KEY,required,notEmpty"`
 	PhotosBucket       string `env:"PHOTOS_BUCKET,required,notEmpty"`
+
+	//admin
+	AdminEmail    string `env:"ADMIN_EMAIL" envDefault:"1chadaevartem030806@gmail.com"`
+	AdminPassword string `env:"ADMIN_PASSWORD" envDefault:"admin"`
 }
 
 var Cfg *config

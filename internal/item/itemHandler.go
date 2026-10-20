@@ -1,7 +1,6 @@
 package item
 
 import (
-	"context"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -18,21 +17,11 @@ import (
 	"github.com/justinas/alice"
 )
 
-type service interface {
-	giftItem(ctx context.Context, uid, newOwner uuid.UUID, itemID int64, description string) error
-	createUploadURL(ctx context.Context, uid uuid.UUID, fileSize int64, sha256Hex, filename string) (string, uuid.UUID, error)
-	confirmUpload(ctx context.Context, uid uuid.UUID, key uuid.UUID) error
-	cancelUpload(ctx context.Context, uid uuid.UUID) error
-	getUploadStatus(ctx context.Context, uid uuid.UUID, key uuid.UUID) (UploadStatus, error)
-	getDownloadURL(ctx context.Context, uid uuid.UUID, itemID int64) (string, error)
-}
-
-// В будущем на сервере будет домен claudflare + backblaze
 type Handler struct {
-	service service
+	service *Service
 }
 
-func NewHandler(service service) *Handler {
+func NewHandler(service *Service) *Handler {
 	return &Handler{
 		service: service,
 	}

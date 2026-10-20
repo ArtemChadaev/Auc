@@ -6,6 +6,8 @@ import (
 	"io"
 	"time"
 	"uuid"
+
+	"github.com/ArtemChadaev/Auction/cmd/mimeType"
 )
 
 // Мок-функции генерации метаданных без ошибок на основе структур из itemDomain.go
@@ -81,17 +83,17 @@ func createItemMetadata(ctx context.Context, iType mimeType.ItemType, mType stri
 
 	var meta any
 	switch iType {
-	case Image:
+	case mimeType.Image:
 		meta = mockImageMetadata(hmData)
-	case Model3D:
+	case mimeType.Model3D:
 		meta = mockModel3DMetadata(hmData)
-	case Audio:
+	case mimeType.Audio:
 		meta = mockAudioMetadata(hmData)
-	case Video:
+	case mimeType.Video:
 		meta = mockVideoMetadata(hmData)
-	case Document:
+	case mimeType.Document:
 		meta = mockDocumentMetadata(hmData)
-	case Archive:
+	case mimeType.Archive:
 		meta = mockArchiveMetadata(hmData)
 	default:
 		meta = mockImageMetadata(hmData)
