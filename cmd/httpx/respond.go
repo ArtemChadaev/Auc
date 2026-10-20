@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -46,6 +47,9 @@ func DecodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 			WriteResponse(w, ErrRespInvalidReqBody)
 		}
 		return req, fmt.Errorf("respond.DecodeJSON: %v", apperr.NewAppError(err, 4))
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		WriteResponse(w, ErrRespInvalidReqBody)
 	}
 	val := reflect.ValueOf(&req).Elem()
 	if val.Kind() != reflect.Struct {

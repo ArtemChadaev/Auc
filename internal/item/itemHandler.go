@@ -15,6 +15,7 @@ import (
 	"github.com/ArtemChadaev/Auction/cmd/httpx"
 	"github.com/ArtemChadaev/Auction/cmd/storage"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
+	"github.com/justinas/alice"
 )
 
 type service interface {
@@ -419,20 +420,20 @@ func (h *Handler) getDownloadURL(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) RouterUpload() http.Handler {
+func (h *Handler) RouterUpload(authChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /url", h.getUploadURL)
 	mux.HandleFunc("POST /confirm", h.confirmUpload)
 	mux.HandleFunc("POST /cancel", h.cancelUpload)
 	mux.HandleFunc("GET /status", h.getUploadStatus)
-	return mux
+	return authChain.Then(mux)
 }
 
-func (h *Handler) RouterItem() http.Handler {
+func (h *Handler) RouterItem(authChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{id}/download", h.getDownloadURL)
 	mux.HandleFunc("POST /gift", h.giftItem)
-	return mux
+	return authChain.Then(mux)
 }
 
 type giftItemReq struct {

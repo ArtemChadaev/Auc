@@ -32,31 +32,12 @@ var (
 	ErrInvalidImage   = apperr.NewAppErrorString("invalid image data", -4)
 )
 
-type repo interface {
-	login(ctx context.Context, email string) (uuid.UUID, string, error)
-	register(ctx context.Context, id uuid.UUID, name string, email string, password string) error
-	getEmailByID(ctx context.Context, uid uuid.UUID) (string, error)
-	getUser(ctx context.Context, uid uuid.UUID) (User, error)
-	patchUserName(ctx context.Context, uid uuid.UUID, name string) error
-	deleteUser(ctx context.Context, uid uuid.UUID) error
-
-	newToken(ctx context.Context, userID uuid.UUID, refreshToken []byte, device Device) error
-	findCurrentToken(ctx context.Context, refreshToken []byte) (Session, error)
-	findAllTokens(ctx context.Context, userID uuid.UUID) ([]Session, error)
-	findAllCurrentTokens(ctx context.Context, userID uuid.UUID) ([]Session, error)
-	revokedToken(ctx context.Context, tokenID int64, uid uuid.UUID) error
-	updateToken(ctx context.Context, refreshToken []byte) (Session, error)
-
-	insertS3Hash(ctx context.Context, hash string) (uuid.UUID, bool, error)
-	updateAvatar(ctx context.Context, uid uuid.UUID, avatarID uuid.UUID) error
-}
-
 type Service struct {
-	repo repo
+	repo *Repo
 	s3   *storageS3.Client
 }
 
-func NewService(repo repo, s3 *storageS3.Client) *Service {
+func NewService(repo *Repo, s3 *storageS3.Client) *Service {
 	return &Service{
 		repo: repo,
 		s3:   s3,

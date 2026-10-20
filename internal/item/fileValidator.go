@@ -13,11 +13,11 @@ var (
 	errFileSizeExceeded = mimeType.ErrFileSizeExceeded
 )
 
-func MaxSizeForType(t itemType) int64 {
+func MaxSizeForType(t mimeType.ItemType) int64 {
 	return mimeType.MaxSizeForType(mimeType.ItemType(t))
 }
 
-func validateSample(r io.Reader, filename string, fileSize int64) (itemType, *mimetype.MIME, error) {
+func validateSample(r io.Reader, filename string, fileSize int64) (mimeType.ItemType, *mimetype.MIME, error) {
 	t, m, err := mimeType.ValidateSample(r, filename, fileSize)
-	return itemType(t), m, err
+	return mimeType.ItemType(t), m, err
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"uuid"
 
+	"github.com/ArtemChadaev/Auction/cmd/mimeType"
 	"github.com/ArtemChadaev/Auction/cmd/storage"
 	"github.com/jackc/pgx/v5"
 )
@@ -30,7 +31,7 @@ func (r *Repo) createS3(ctx context.Context, id uuid.UUID, hash string) error {
 	return nil
 }
 
-func (r *Repo) createItem(ctx context.Context, uid uuid.UUID, s3ID uuid.UUID, iType itemType, metadata json.RawMessage) (Item, error) {
+func (r *Repo) createItem(ctx context.Context, uid uuid.UUID, s3ID uuid.UUID, iType mimeType.ItemType, metadata json.RawMessage) (Item, error) {
 	var item Item
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO items (creator_id, owner_id, s3_id, type, metadata) 

@@ -14,6 +14,7 @@ import (
 	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
+	"github.com/ArtemChadaev/Auction/cmd/mimeType"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/errgroup"
@@ -280,7 +281,7 @@ func (s *Service) confirmUpload(ctx context.Context, uid uuid.UUID, key uuid.UUI
 }
 
 // processFullUpload фоново скачивает весь файл, сверяет sha256 и строит metadata
-func (s *Service) processFullUpload(ctx context.Context, pending UploadPending, iType itemType, mType string) {
+func (s *Service) processFullUpload(ctx context.Context, pending UploadPending, iType mimeType.ItemType, mType string) {
 	// Семафор: не более N параллельных обработок (остальные подождут)
 	s.uploadSem <- struct{}{}
 	defer func() { <-s.uploadSem }()
