@@ -7,6 +7,9 @@
         <function importPath="github.com/ArtemChadaev/Auction/internal/httpx" name="DecodeJSON" />
         <function importPath="github.com/ArtemChadaev/Auction/cmd/httpx" name="DecodeJSON" />
       </functions>
+      <methods>
+        <method importPath="github.com/ArtemChadaev/Auction/cmd/storage" receiver="DBTX" name="Exec" />
+      </methods>
     </inspection_tool>
     <inspection_tool class="GoUnhandledErrorResult" enabled="true" level="WARNING" enabled_by_default="true">
       <methods>
@@ -21,6 +24,7 @@
         <method importPath="strings" receiver="*Builder" name="WriteString" />
         <method importPath="bytes" receiver="*Buffer" name="WriteRune" />
         <method importPath="github.com/jackc/pgx/v5" receiver="Tx" name="Rollback" />
+        <method importPath="github.com/ArtemChadaev/Auction/cmd/valkey" receiver="*Client" name="Close" />
       </methods>
     </inspection_tool>
     <inspection_tool class="SqlCurrentSchemaInspection" enabled="false" level="WARNING" enabled_by_default="false" />

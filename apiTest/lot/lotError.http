@@ -1,0 +1,1471 @@
+# BLACK-BOX ADVERSARIAL & SECURITY TEST SUITE: AUCTION LOT API
+# Сгенерировано строго по docs/swagger.yaml и http-client.env.json
+
+### 0.1 Регистрация обычного пользователя (Жертва / Создатель лота)
+< {%
+    let ts = Date.now();
+    client.global.set("victim_email", "victim_" + ts + "@security.test");
+    client.global.set("victim_pass", "VictimPass123!");
+%}
+POST {{host}}/api/auth/register
+Content-Type: application/json
+Accept: application/json
+
+{
+  "name": "Victim User",
+  "email": "{{victim_email}}",
+  "password": "{{victim_pass}}"
+}
+
+### 0.2 Вход обычного пользователя (сохранение victim_token)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "email": "{{victim_email}}",
+  "password": "{{victim_pass}}"
+}
+
+> {%
+    client.test("Victim user login 200 OK", () => {
+        client.assert(response.status === 200, "Expected status 200");
+    });
+    client.global.set("victim_token", response.body.data.access_token);
+    client.global.set("auth_token", response.body.data.access_token);
+%}
+
+### 0.3 Вход администратора (проверка кредов из http-client.env.json)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "email": "{{adminemail}}",
+  "password": "{{adminpass}}"
+}
+
+> {%
+    client.test("Admin login 200 OK", () => {
+        client.assert(response.status === 200, "Expected 200 for admin login");
+        client.assert(response.body.data.access_token, "Admin access token required");
+    });
+    client.global.set("admin_token", response.body.data.access_token);
+%}
+
+### 0.4 Регистрация второго пользователя (Атакующий / Злоумышленник)
+< {%
+    let ts = Date.now();
+    client.global.set("attacker_email", "attacker_" + ts + "@security.test");
+    client.global.set("attacker_pass", "AttackerPass666!");
+%}
+POST {{host}}/api/auth/register
+Content-Type: application/json
+Accept: application/json
+
+{
+  "name": "Attacker User",
+  "email": "{{attacker_email}}",
+  "password": "{{attacker_pass}}"
+}
+
+### 0.5 Вход атакующего пользователя (сохранение attacker_token)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "email": "{{attacker_email}}",
+  "password": "{{attacker_pass}}"
+}
+
+> {%
+    client.test("Attacker login 200 OK", () => {
+        client.assert(response.status === 200, "Expected status 200");
+    });
+    client.global.set("attacker_token", response.body.data.access_token);
+%}
+
+### 0.6 Инициализация тестового лота жертвы для атак (Создание лота pending_review с lot.Description)
+< {%
+    let now = new Date();
+    let start = new Date(now.getTime() + 1000 * 60 * 180);
+    let end = new Date(now.getTime() + 1000 * 60 * 60 * 48);
+    client.global.set("target_start_at", start.toISOString());
+    client.global.set("target_end_at", end.toISOString());
+%}
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Целевой лот жертвы для проверок безопасности",
+  "description": {
+    "short_text": "Целевой лот для секьюрити тестов",
+    "text": "Изначальный ценный лот с полным валидным описанием",
+    "type": "image",
+    "tags": ["security", "test", "audit"],
+    "photo": ["initial_proof.jpg"],
+    "auto_activate": false,
+    "auto_active": false
+  },
+  "item_id": 1,
+  "start_amount": 10000,
+  "min_step": 1000,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "pending_review",
+  "auto_activate": false
+}
+
+> {%
+    if (response.status === 201 && response.body.data && response.body.data.id) {
+        client.global.set("target_lot_id", response.body.data.id);
+    } else {
+        client.global.set("target_lot_id", 1);
+    }
+%}
+
+### 1.1 Попытка эскалации: Обычный пользователь пытается сам одобрить свой лот
+POST {{host}}/api/lot/{{target_lot_id}}/approved
+Authorization: Bearer {{victim_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject non-admin approval attempt (403 Forbidden)", () => {
+        client.assert(response.status === 403, "Ожидался статус 403 Forbidden при попытке обычного юзера одобрить лот, получен: " + response.status);
+    });
+%}
+
+### 1.2 Попытка эскалации: Другой обычный пользователь пытается одобрить чужой лот
+POST {{host}}/api/lot/{{target_lot_id}}/approved
+Authorization: Bearer {{attacker_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject attacker approval attempt (403 Forbidden)", () => {
+        client.assert(response.status === 403, "Ожидался статус 403 Forbidden, получен: " + response.status);
+    });
+%}
+
+### 1.3 Неавторизованный запрос на одобрение лота (без токена)
+POST {{host}}/api/lot/{{target_lot_id}}/approved
+Accept: application/json
+
+> {%
+    client.test("Reject unauthenticated approval (401 Unauthorized)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized, получен: " + response.status);
+    });
+%}
+
+### 1.4 Одобрение лота с поддельным/поврежденным JWT токеном
+POST {{host}}/api/lot/{{target_lot_id}}/approved
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.fake_signature_hash
+Accept: application/json
+
+> {%
+    client.test("Reject fake JWT token (401 Unauthorized)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized, получен: " + response.status);
+    });
+%}
+
+### 1.5 Одобрение лота с пустым Bearer токеном
+POST {{host}}/api/lot/{{target_lot_id}}/approved
+Authorization: Bearer 
+Accept: application/json
+
+> {%
+    client.test("Reject empty Bearer token (401 Unauthorized)", () => {
+        client.assert(response.status === 401, "Ожидался статус 401 Unauthorized, получен: " + response.status);
+    });
+%}
+
+### 1.6 Одобрение администратором несуществующего лота (ID = 999999999)
+POST {{host}}/api/lot/999999999/approved
+Authorization: Bearer {{admin_token}}
+Accept: application/json
+
+> {%
+    client.test("Admin approve non-existent lot returns 404 Not Found", () => {
+        client.assert(response.status === 404, "Ожидался статус 404 Not Found, получен: " + response.status);
+    });
+%}
+
+### 1.7 Одобрение администратором с отрицательным ID лота (-1)
+POST {{host}}/api/lot/-1/approved
+Authorization: Bearer {{admin_token}}
+Accept: application/json
+
+> {%
+    client.test("Admin approve negative ID returns 400 Bad Request", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался статус 400/404, получен: " + response.status);
+    });
+%}
+
+### 1.8 Одобрение администратором с нечисловым ID лота (string injection)
+POST {{host}}/api/lot/admin_bypass_id/approved
+Authorization: Bearer {{admin_token}}
+Accept: application/json
+
+> {%
+    client.test("Admin approve non-numeric ID returns 400 Bad Request", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался статус 400/404, получен: " + response.status);
+    });
+%}
+
+### 1.9 Успешное одобрение администратором целевого лота (200 OK)
+POST {{host}}/api/lot/{{target_lot_id}}/approved
+Authorization: Bearer {{admin_token}}
+Accept: application/json
+
+> {%
+    client.test("Admin successfully approves lot (200 OK)", () => {
+        client.assert(response.status === 200, "Ожидался 200 OK при одобрении админом, получен: " + response.status);
+    });
+%}
+
+### 1.10 Повторное одобрение администратором уже одобренного лота (State Machine Violation)
+POST {{host}}/api/lot/{{target_lot_id}}/approved
+Authorization: Bearer {{admin_token}}
+Accept: application/json
+
+> {%
+    client.test("Reject duplicate approval on already approved lot (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 409, "Ожидалась ошибка 400/409 при повторном одобрении, получен: " + response.status);
+    });
+%}
+
+### 2.1 IDOR Атака: Атакующий пытается изменить параметры чужого лота (PUT /api/lot/{id})
+PUT {{host}}/api/lot/{{target_lot_id}}
+Authorization: Bearer {{attacker_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "ХАКНУТЫЙ ЛОТ: Цена 1 рубль",
+  "description": {
+    "short_text": "ХАКНУТЫЙ ЛОТ",
+    "text": "Попытка подмены описания через IDOR",
+    "type": "image",
+    "tags": ["hacked"],
+    "photo": ["hacked.jpg"],
+    "auto_activate": false,
+    "auto_active": false
+  },
+  "item_id": 1,
+  "start_amount": 1,
+  "min_step": 1,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft",
+  "auto_activate": false
+}
+
+> {%
+    client.test("Block IDOR lot modification by stranger (403/404)", () => {
+        client.assert(response.status === 403 || response.status === 404, "Чужой пользователь не должен менять лот! Ожидался 403/404, получен: " + response.status);
+    });
+%}
+
+### 2.2 IDOR Атака: Атакующий пытается отменить / удалить чужой лот (DELETE /api/lot/{id})
+DELETE {{host}}/api/lot/{{target_lot_id}}
+Authorization: Bearer {{attacker_token}}
+Accept: application/json
+
+> {%
+    client.test("Block IDOR lot cancellation by stranger (403/404)", () => {
+        client.assert(response.status === 403 || response.status === 404, "Чужой пользователь не должен отменять лот! Ожидался 403/404, получен: " + response.status);
+    });
+%}
+
+### 2.3 IDOR Атака: Атакующий пытается активировать чужой одобренный лот (POST /api/lot/{id}/activate)
+POST {{host}}/api/lot/{{target_lot_id}}/activate
+Authorization: Bearer {{attacker_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}"
+}
+
+> {%
+    client.test("Block IDOR lot activation by stranger (403/404)", () => {
+        client.assert(response.status === 403 || response.status === 404, "Чужой пользователь не должен активировать лот! Ожидался 403/404, получен: " + response.status);
+    });
+%}
+
+### 2.4 Атака на захват предмета: Попытка создать лот с чужим item_id
+POST {{host}}/api/lot/
+Authorization: Bearer {{attacker_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Попытка кражи чужого предмета в лот",
+  "description": {
+    "short_text": "Попытка кражи",
+    "text": "Кража чужого предмета",
+    "type": "image",
+    "tags": ["theft"],
+    "photo": []
+  },
+  "item_id": 999999999,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "pending_review",
+  "auto_activate": false
+}
+
+> {%
+    client.test("Reject lot creation with non-owned/non-existent item (404/400)", () => {
+        client.assert(response.status === 404 || response.status === 400 || response.status === 403, "Ожидался статус 404/400/403, получен: " + response.status);
+    });
+%}
+
+### 3.1 Создание лота без заголовка Authorization (POST /api/lot/)
+POST {{host}}/api/lot/
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Анонимный лот",
+  "description": {
+    "short_text": "Анонимный лот",
+    "text": "Попытка создания без токена",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 1000,
+  "min_step": 100
+}
+
+> {%
+    client.test("Reject anonymous lot creation (401 Unauthorized)", () => {
+        client.assert(response.status === 401, "Ожидался 401, получен: " + response.status);
+    });
+%}
+
+### 3.2 Получение списка своих лотов без авторизации (GET /api/lot/my)
+GET {{host}}/api/lot/my
+Accept: application/json
+
+> {%
+    client.test("Reject anonymous access to my lots (401 Unauthorized)", () => {
+        client.assert(response.status === 401, "Ожидался 401, получен: " + response.status);
+    });
+%}
+
+### 3.3 Обновление лота без авторизации (PUT /api/lot/{id})
+PUT {{host}}/api/lot/{{target_lot_id}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Анонимное обновление",
+  "start_amount": 1000
+}
+
+> {%
+    client.test("Reject anonymous lot update (401 Unauthorized)", () => {
+        client.assert(response.status === 401, "Ожидался 401, получен: " + response.status);
+    });
+%}
+
+### 3.4 Удаление лота без авторизации (DELETE /api/lot/{id})
+DELETE {{host}}/api/lot/{{target_lot_id}}
+Accept: application/json
+
+> {%
+    client.test("Reject anonymous lot deletion (401 Unauthorized)", () => {
+        client.assert(response.status === 401, "Ожидался 401, получен: " + response.status);
+    });
+%}
+
+### 3.5 Активация лота без авторизации (POST /api/lot/{id}/activate)
+POST {{host}}/api/lot/{{target_lot_id}}/activate
+Accept: application/json
+
+> {%
+    client.test("Reject anonymous lot activation (401 Unauthorized)", () => {
+        client.assert(response.status === 401, "Ожидался 401, получен: " + response.status);
+    });
+%}
+
+### 4.1 Создание лота с принудительным статусом 'active' (обход модерации)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Попытка мгновенной активации в обход админа",
+  "description": {
+    "short_text": "Bypass status",
+    "text": "Bypass review attempt",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 1000,
+  "min_step": 100,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "active"
+}
+
+> {%
+    client.test("Prevent bypassing admin review via status injection", () => {
+        if (response.status === 201) {
+            client.assert(response.body.data.status !== "active", "КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: Лот создан сразу в статусе active без одобрения!");
+        } else {
+            client.assert(response.status === 400 || response.status === 422, "Ожидалась ошибка 400/422, получен: " + response.status);
+        }
+    });
+%}
+
+### 4.2 Создание лота с инъекцией 'winner_id' (попытка мгновенной победы)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Попытка назначения победителя при создании",
+  "description": {
+    "short_text": "Winner inject",
+    "text": "Winner injection attempt",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 1000,
+  "min_step": 100,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft",
+  "winner_id": "hacker_uuid_12345",
+  "finish_amount": 999999
+}
+
+> {%
+    client.test("Prevent mass assignment of winner_id and finish_amount", () => {
+        if (response.status === 201) {
+            client.assert(!response.body.data.winner_id, "КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: winner_id был внедрен на создании!");
+        } else {
+            client.assert(response.status >= 400, "Ожидалась ошибка валидации");
+        }
+    });
+%}
+
+### 4.3 Создание лота с подделкой 'seller_id' (попытка создать лот от имени другого юзера/админа)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Попытка подмены seller_id",
+  "description": {
+    "short_text": "Spoof seller",
+    "text": "Seller spoof attempt",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 1000,
+  "min_step": 100,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft",
+  "seller_id": "00000000-0000-0000-0000-000000000001"
+}
+
+> {%
+    client.test("Prevent spoofing seller_id", () => {
+        if (response.status === 201) {
+            client.assert(response.body.data.seller_id !== "00000000-0000-0000-0000-000000000001", "КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: seller_id был подделан!");
+        } else {
+            client.assert(response.status >= 400, "Ожидалась ошибка");
+        }
+    });
+%}
+
+### 5.1 Отрицательная стартовая цена (start_amount = -5000)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Отрицательная цена",
+  "description": {
+    "short_text": "Neg amount",
+    "text": "Negative start amount test",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": -5000,
+  "min_step": 100,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject negative start_amount (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался 400/422, получен: " + response.status);
+    });
+%}
+
+### 5.2 Нулевая стартовая цена (start_amount = 0)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Бесплатный лот с нулем",
+  "description": {
+    "short_text": "Zero amount",
+    "text": "Zero start amount test",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 0,
+  "min_step": 100,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject zero start_amount (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался 400/422, получен: " + response.status);
+    });
+%}
+
+### 5.3 Отрицательный шаг ставки (min_step = -100)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Отрицательный шаг ставки",
+  "description": {
+    "short_text": "Neg step",
+    "text": "Negative step test",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 1000,
+  "min_step": -100,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject negative min_step (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался 400/422, получен: " + response.status);
+    });
+%}
+
+### 5.4 Нулевой шаг ставки (min_step = 0)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Нулевой шаг ставки",
+  "description": {
+    "short_text": "Zero step",
+    "text": "Zero min step test",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 1000,
+  "min_step": 0,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject zero min_step (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался 400/422, получен: " + response.status);
+    });
+%}
+
+### 5.5 Переполнение целого числа (Integer Overflow: start_amount = MaxInt64)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Переполнение MaxInt64",
+  "description": {
+    "short_text": "Overflow",
+    "text": "Overflow test",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 9223372036854775807,
+  "min_step": 100,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Handle MaxInt64 start_amount safely without 500 crash", () => {
+        client.assert(response.status !== 500, "Сервер упал с кодом 500 при переполнении int64!");
+    });
+%}
+
+### 5.6 Экстремальное число (Integer / Float Overflow: 1e30)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Астрономическое число",
+  "description": {
+    "short_text": "Extreme number",
+    "text": "Extreme number test",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 999999999999999999999999999999999999999,
+  "min_step": 100,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject huge number safely without 500 crash", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидалась ошибка 4xx, получен: " + response.status);
+    });
+%}
+
+### 5.7 Несоответствие типов: Строка вместо числа в start_amount
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Строка в цене",
+  "description": {
+    "short_text": "String price",
+    "text": "String in start amount",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": "one_million_dollars",
+  "min_step": 100,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject string in start_amount (400 Bad Request)", () => {
+        client.assert(response.status === 400, "Ожидался статус 400, получен: " + response.status);
+    });
+%}
+
+### 6.1 Парадокс времени: ends_at раньше чем started_at (Окончание до старта)
+< {%
+    let now = new Date();
+    let startTime = new Date(now.getTime() + 1000 * 60 * 60 * 24);
+    let endTime = new Date(now.getTime() + 1000 * 60 * 60 * 2);
+    client.global.set("paradox_start", startTime.toISOString());
+    client.global.set("paradox_end", endTime.toISOString());
+%}
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Парадокс: окончание до начала",
+  "description": {
+    "short_text": "Time paradox",
+    "text": "Paradox test",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{paradox_start}}",
+  "ends_at": "{{paradox_end}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject ends_at before started_at (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидалась ошибка 400/422 при ends_at < started_at, получен: " + response.status);
+    });
+%}
+
+### 6.2 Аукцион в прошлом: started_at и ends_at в 1970 году (Unix Epoch)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Лот из прошлого (1970 год)",
+  "description": {
+    "short_text": "Past dates",
+    "text": "Epoch test",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "1970-01-01T00:00:00Z",
+  "ends_at": "1970-01-02T00:00:00Z",
+  "status": "pending_review"
+}
+
+> {%
+    client.test("Reject past dates for lot start/end (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400/422, получен: " + response.status);
+    });
+%}
+
+### 6.3 Нулевая длительность торгов: started_at равно ends_at
+< {%
+    let t = new Date(Date.now() + 1000 * 60 * 60).toISOString();
+    client.global.set("zero_dur", t);
+%}
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Нулевая длительность аукциона",
+  "description": {
+    "short_text": "Zero duration",
+    "text": "Zero duration test",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{zero_dur}}",
+  "ends_at": "{{zero_dur}}",
+  "status": "pending_review"
+}
+
+> {%
+    client.test("Reject zero duration lot (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400/422, получен: " + response.status);
+    });
+%}
+
+### 7.1 Создание неотдобренного черновика
+< {%
+    let now = new Date();
+    client.global.set("draft_test_start", new Date(now.getTime() + 1000 * 60 * 120).toISOString());
+    client.global.set("draft_test_end", new Date(now.getTime() + 1000 * 60 * 60 * 24).toISOString());
+%}
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Черновик для проверки активации",
+  "description": {
+    "short_text": "Draft lot",
+    "text": "Unapproved draft test",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{draft_test_start}}",
+  "ends_at": "{{draft_test_end}}",
+  "status": "draft"
+}
+
+> {%
+    if (response.body.data && response.body.data.id) {
+        client.global.set("unapproved_draft_id", response.body.data.id);
+    }
+%}
+
+### 7.2 Попытка активации неотдобренного черновика (POST /api/lot/{id}/activate)
+POST {{host}}/api/lot/{{unapproved_draft_id}}/activate
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "started_at": "{{draft_test_start}}",
+  "ends_at": "{{draft_test_end}}"
+}
+
+> {%
+    client.test("Reject activation of draft lot (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 409, "Ожидался статус 400 (лот не в статусе approved), получен: " + response.status);
+    });
+%}
+
+### 8.1 Недопустимое значение enum в description.type (значение вне mimeType.ItemType)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Невалидный mimeType enum",
+  "description": {
+    "short_text": "Invalid type",
+    "text": "Invalid mimeType enum test",
+    "type": "malicious_executable_script"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject invalid enum value in description.type (400/422)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400/422 на невалидный enum type, получен: " + response.status);
+    });
+%}
+
+### 8.2 Передача числа вместо строки в description.type
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Число в поле type",
+  "description": {
+    "short_text": "Number in type",
+    "type": 999
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject integer in description.type (400/422)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400/422, получен: " + response.status);
+    });
+%}
+
+### 8.3 description.photo передан как одиночная строка вместо массива строк
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Строка вместо массива в photo",
+  "description": {
+    "short_text": "Single string photo",
+    "type": "image",
+    "photo": "not_an_array_photo.jpg"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject string instead of array in description.photo (400/422)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400/422, получен: " + response.status);
+    });
+%}
+
+### 8.4 description.photo содержит Directory Traversal и SSRF URL
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Traversal и SSRF в photo",
+  "description": {
+    "short_text": "SSRF in photo",
+    "type": "image",
+    "photo": [
+      "../../../../../../etc/passwd",
+      "file:///etc/shadow",
+      "http://169.254.169.254/latest/meta-data/"
+    ]
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Handle SSRF / Traversal photo URLs safely (no 500)", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500 при небезопасных путях в photo");
+    });
+%}
+
+### 8.5 Stored XSS инъекция в элементах массива description.photo
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "XSS в photo",
+  "description": {
+    "short_text": "XSS in photo array",
+    "type": "image",
+    "photo": [
+      "<script>alert('photo_xss')</script>",
+      "javascript:alert(document.cookie)"
+    ]
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Handle XSS payload in photo array safely (no 500)", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500 при XSS в photo");
+    });
+%}
+
+### 8.6 description.tags передан как строка/число вместо массива строк
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Не массив в tags",
+  "description": {
+    "short_text": "Tags type mismatch",
+    "type": "image",
+    "tags": "antique,collectibles,art"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject non-array in description.tags (400/422)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400/422, получен: " + response.status);
+    });
+%}
+
+### 8.7 SQL Injection и Stored XSS в элементах массива description.tags
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "SQLi & XSS в tags",
+  "description": {
+    "short_text": "Tags injection test",
+    "type": "image",
+    "tags": [
+      "'; DROP TABLE lots; --",
+      "<script>alert('tags_xss')</script>",
+      "' OR 1=1 --"
+    ]
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Handle SQL injection and XSS in tags array safely without 500 crash", () => {
+        client.assert(response.status !== 500, "КРИТИЧЕСКАЯ ОШИБКА: Сервер упал с 500 на инъекциях в tags!");
+    });
+%}
+
+### 8.8 Stored XSS в description.short_text и description.text
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "XSS в текстовых полях description",
+  "description": {
+    "short_text": "<img src=x onerror=alert('short_text_xss')>",
+    "text": "<iframe src='javascript:alert(document.domain)'></iframe><script>eval('xss')</script>",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Handle Stored XSS in description texts safely without 500 crash", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500");
+    });
+%}
+
+### 8.9 SQL Injection в description.short_text и description.text
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "SQLi в description",
+  "description": {
+    "short_text": "' UNION SELECT username, password, email FROM users --",
+    "text": "'; UPDATE lots SET winner_id='attacker' WHERE id=1; --",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Handle SQL injection in description texts safely without 500 crash", () => {
+        client.assert(response.status !== 500, "КРИТИЧЕСКАЯ ОШИБКА: Сервер упал с 500 на SQL injection в description!");
+    });
+%}
+
+### 8.10 Buffer Overflow / DoS в description.short_text (10,000 символов)
+< {%
+    let bigShort = "B".repeat(10000);
+    client.global.set("huge_short_text", bigShort);
+%}
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Переполнение short_text",
+  "description": {
+    "short_text": "{{huge_short_text}}",
+    "text": "Normal text",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Handle huge short_text safely (400 or 413, no 500)", () => {
+        client.assert(response.status !== 500, "Сервер упал с 500 на длинном short_text!");
+    });
+%}
+
+### 8.11 Buffer Overflow / DoS в description.text (50,000 символов)
+< {%
+    let bigText = "C".repeat(50000);
+    client.global.set("huge_description_text", bigText);
+%}
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Переполнение text",
+  "description": {
+    "short_text": "Normal short text",
+    "text": "{{huge_description_text}}",
+    "type": "image"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Handle huge description text safely (400 or 413, no 500)", () => {
+        client.assert(response.status !== 500, "Сервер упал с 500 на длинном description.text!");
+    });
+%}
+
+### 8.12 Передача строки вместо объекта description
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Строка вместо объекта в description",
+  "description": "Просто обычная строка вместо объекта lot.Description",
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject string instead of lot.Description object (400/422)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400/422, получен: " + response.status);
+    });
+%}
+
+### 8.13 Передача массива вместо объекта в description
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Массив вместо объекта в description",
+  "description": [
+    "item1",
+    "item2"
+  ],
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject array instead of lot.Description object (400/422)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400/422, получен: " + response.status);
+    });
+%}
+
+### 8.14 Передача null в description
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Null в description",
+  "description": null,
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Handle null description safely (400 or 201, no 500)", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500 при null в description");
+    });
+%}
+
+### 8.15 Несоответствие типов: Строка вместо boolean в auto_activate внутри description
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Строка вместо bool в description",
+  "description": {
+    "short_text": "Type mismatch bool",
+    "type": "image",
+    "auto_activate": "true",
+    "auto_active": "false"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Reject string in boolean fields of description (400/422)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400/422, получен: " + response.status);
+    });
+%}
+
+### 8.16 Попытка Mass Assignment через внедрение системных полей внутрь description
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Инъекция полей в description",
+  "description": {
+    "short_text": "Mass assignment attempt",
+    "type": "image",
+    "seller_id": "00000000-0000-0000-0000-000000000001",
+    "winner_id": "attacker_id",
+    "role": "admin",
+    "status": "active"
+  },
+  "item_id": 1,
+  "start_amount": 5000,
+  "min_step": 500,
+  "started_at": "{{target_start_at}}",
+  "ends_at": "{{target_end_at}}",
+  "status": "draft"
+}
+
+> {%
+    client.test("Server safely ignores or rejects unexpected injected keys in description", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500");
+    });
+%}
+
+### 8.17 SQL Injection в URL-пути (GET /api/lot/{id})
+GET {{host}}/api/lot/1' OR '1'='1
+Accept: application/json
+
+> {%
+    client.test("Handle SQL injection in path ID safely without 500 crash", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался статус 400/404, получен: " + response.status);
+        client.assert(response.status !== 500, "КРИТИЧЕСКАЯ ОШИБКА: Сервер упал с 500 на SQL injection в ID!");
+    });
+%}
+
+### 8.18 Path Traversal в URL-пути (GET /api/lot/{id})
+GET {{host}}/api/lot/../../../../etc/passwd
+Accept: application/json
+
+> {%
+    client.test("Handle directory traversal in lot ID safely", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался 400/404, получен: " + response.status);
+        client.assert(response.status !== 500, "Сервер не должен падать с 500");
+    });
+%}
+
+### 8.19 Поврежденное тело JSON (Malformed JSON syntax)
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Невалидный json",
+  "start_amount": 5000,
+
+> {%
+    client.test("Reject malformed JSON with 400 Bad Request", () => {
+        client.assert(response.status === 400, "Ожидался статус 400 на битый JSON, получен: " + response.status);
+    });
+%}
+
+### 8.20 Пустое тело запроса ({})
+POST {{host}}/api/lot/
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{}
+
+> {%
+    client.test("Reject empty JSON body (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400/422, получен: " + response.status);
+    });
+%}
+
+### 9.1 Ставка на несуществующий лот (ID = 999999999)
+POST {{host}}/api/bid/999999999
+Authorization: Bearer {{attacker_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "amount": 50000,
+  "idempotency_key": "fake_key_999999"
+}
+
+> {%
+    client.test("Reject bid on non-existent lot (400/404)", () => {
+        client.assert(response.status === 400 || response.status === 404, "Ожидался статус 400/404, получен: " + response.status);
+    });
+%}
+
+### 9.2 Отрицательная сумма ставки (amount = -5000)
+POST {{host}}/api/bid/{{target_lot_id}}
+Authorization: Bearer {{attacker_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "amount": -5000,
+  "idempotency_key": "neg_bid_key_1"
+}
+
+> {%
+    client.test("Reject negative bid amount (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400, получен: " + response.status);
+    });
+%}
+
+### 9.3 Нулевая сумма ставки (amount = 0)
+POST {{host}}/api/bid/{{target_lot_id}}
+Authorization: Bearer {{attacker_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "amount": 0,
+  "idempotency_key": "zero_bid_key_1"
+}
+
+> {%
+    client.test("Reject zero bid amount (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400, получен: " + response.status);
+    });
+%}
+
+### 9.4 Ставка ниже стартовой цены лота (amount < start_amount)
+POST {{host}}/api/bid/{{target_lot_id}}
+Authorization: Bearer {{attacker_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "amount": 100,
+  "idempotency_key": "below_start_key_1"
+}
+
+> {%
+    client.test("Reject bid below starting amount (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался статус 400, получен: " + response.status);
+    });
+%}
+
+### 9.5 Мошенничество продавца: Продавец делает ставку на свой собственный лот (Shill Bidding)
+POST {{host}}/api/bid/{{target_lot_id}}
+Authorization: Bearer {{victim_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "amount": 50000,
+  "idempotency_key": "shill_bid_key_1"
+}
+
+> {%
+    client.test("Prevent seller from bidding on their own lot (400/403)", () => {
+        client.assert(response.status === 400 || response.status === 403, "Продавец не должен делать ставки на свой лот! Ожидался 400/403, получен: " + response.status);
+    });
+%}
+
+### 9.6 Ставка без обязательного ключа идемпотентности (missing idempotency_key)
+POST {{host}}/api/bid/{{target_lot_id}}
+Authorization: Bearer {{attacker_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "amount": 50000
+}
+
+> {%
+    client.test("Reject bid without idempotency key (400 Bad Request)", () => {
+        client.assert(response.status === 400 || response.status === 422, "Ожидался 400/422, получен: " + response.status);
+    });
+%}
+
+### 9.7 SQL Injection в idempotency_key ставки
+POST {{host}}/api/bid/{{target_lot_id}}
+Authorization: Bearer {{attacker_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "amount": 50000,
+  "idempotency_key": "' OR '1'='1' --"
+}
+
+> {%
+    client.test("Handle SQL injection in idempotency_key safely (no 500)", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500 на SQL injection");
+    });
+%}
+
+### 10.1 SQL Injection в query параметрах списка лотов
+GET {{host}}/api/lot/?limit=10' OR '1'='1&sort=desc;DROP TABLE lots;--
+Accept: application/json
+
+> {%
+    client.test("Handle SQL injection in query params safely without 500 crash", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500");
+    });
+%}
+
+### 10.2 Отрицательная пагинация (?page=-1&limit=-100)
+GET {{host}}/api/lot/?page=-1&limit=-100
+Accept: application/json
+
+> {%
+    client.test("Handle negative pagination safely without 500 crash", () => {
+        client.assert(response.status !== 500, "Сервер не должен падать с 500 на отрицательной пагинации");
+    });
+%}
+
+### 10.3 Проверка приватности: Публичный список GET /api/lot/ не должен содержать чужие черновики
+GET {{host}}/api/lot/
+Accept: application/json
+
+> {%
+    client.test("Public lots list only includes active/finished lots", () => {
+        client.assert(response.status === 200, "Expected status 200");
+        if (Array.isArray(response.body.data)) {
+            let hasDrafts = response.body.data.some(l => l.status === "draft" || l.status === "pending_review");
+            client.assert(!hasDrafts, "УТЕЧКА ДАННЫХ: В публичном списке найдены лоты со статусом draft или pending_review!");
+        }
+    });
+%}

@@ -36,7 +36,7 @@ func AuthAccessToken(next http.Handler) http.Handler {
 		}
 
 		ctx := context.WithValue(r.Context(), cfg.UID, uid)
-		ctx = context.WithValue(r.Context(), cfg.Role, role)
+		ctx = context.WithValue(ctx, cfg.Role, role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -68,7 +68,7 @@ func AuthAdmin(next http.Handler) http.Handler {
 		}
 
 		ctx := context.WithValue(r.Context(), cfg.UID, uid)
-		ctx = context.WithValue(r.Context(), cfg.Role, role)
+		ctx = context.WithValue(ctx, cfg.Role, role)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

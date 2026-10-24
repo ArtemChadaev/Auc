@@ -2,7 +2,6 @@ package lot
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -33,7 +32,7 @@ func (r *Repo) create(
 	startAmount int64,
 	minStep int64,
 	title string,
-	description json.RawMessage,
+	description Description,
 	startedAt *time.Time,
 	endedAt *time.Time,
 ) (Lot, error) {
@@ -50,6 +49,11 @@ func (r *Repo) create(
 	}
 	lot, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[Lot])
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if res, _ := r.db.Exec(ctx, "SELECT 1 FROM items WHERE id = $1 AND owner_id = $2", itemID, sellerID); res.RowsAffected() == 0 {
+				return Lot{}, fmt.Errorf("lotRepo.create: %w", storage.ErrForbidden)
+			}
+		}
 		return Lot{}, fmt.Errorf("lotRepo.create: %w", storage.ErrRepo(err))
 	}
 	return lot, nil
@@ -64,7 +68,7 @@ func (r *Repo) updateFromSeller(
 	startAmount int64,
 	minStep int64,
 	title string,
-	description json.RawMessage,
+	description Description,
 	startedAt *time.Time,
 	endedAt *time.Time,
 ) (Lot, error) {
@@ -189,19 +193,23 @@ func (r *Repo) cancel(ctx context.Context, id int64, sellerId uuid.UUID) error {
 
 func (r *Repo) getByIdForUpdate(ctx context.Context, id int64) (Lot, error) {
 	var lot Lot
-	row, err := r.db.Query(ctx, "SELECT * FROM lots WHERE id = $1 AND status IN ($2, $3, $4, $5) FOR UPDATE", id, Approved, Active, Finished, Cancelled)
+	row, err := r.db.Query(ctx, `
+		SELECT id, seller_id, item_id, status, winner_id, start_amount, min_step, finish_amount, title, description, created_at, started_at, ends_at, finished_at 
+		FROM lots 
+		WHERE id = $1 AND created_at > now() AND ends_at < now() + interval '1 minute'
+		FOR UPDATE`, id)
 	if err != nil {
-		return lot, fmt.Errorf("lotRepo.getById: %w", storage.ErrRepo(err))
+		return lot, fmt.Errorf("lotRepo.getByIdForUpdate: %w", storage.ErrRepo(err))
 	}
 	lot, err = pgx.CollectExactlyOneRow(row, pgx.RowToStructByName[Lot])
 	if err != nil {
-		return lot, fmt.Errorf("lotRepo.getById: %w", storage.ErrRepo(err))
+		return lot, fmt.Errorf("lotRepo.getByIdForUpdate: %w", storage.ErrRepo(err))
 	}
 	return lot, nil
 }
 
-func (r *Repo) createBid(ctx context.Context, idLot int64, uid, iKey uuid.UUID, amount int) error {
-	_, err := r.db.Exec(ctx, "INSERT INTO bids VALUES (default, $1, $2, $3, $4, default)", idLot, uid, amount, iKey)
+func (r *Repo) createBid(ctx context.Context, idLot int64, uid uuid.UUID, amount int) error {
+	_, err := r.db.Exec(ctx, "INSERT INTO bids (lot_id, user_id, amount) VALUES ($1, $2, $3)", idLot, uid, amount)
 	if err != nil {
 		return fmt.Errorf("lotRepo.createBid: %w", storage.ErrRepo(err))
 	}
@@ -209,18 +217,39 @@ func (r *Repo) createBid(ctx context.Context, idLot int64, uid, iKey uuid.UUID, 
 }
 
 func (r *Repo) getLastBid(ctx context.Context, idLot int64) (Bid, error) {
-	row, err := r.db.Query(ctx, "SELECT * FROM bids WHERE lot_id = $1 ORDER BY created_at desc LIMIT 1", idLot)
+	row, err := r.db.Query(ctx, `
+		SELECT id, lot_id, user_id, amount, created_at 
+		FROM bids 
+		WHERE lot_id = $1 
+		ORDER BY id DESC 
+		LIMIT 1`, idLot)
 	if err != nil {
 		return Bid{}, fmt.Errorf("lotRepo.getLastBid: %w", storage.ErrRepo(err))
 	}
 	bid, err := pgx.CollectExactlyOneRow(row, pgx.RowToStructByName[Bid])
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Bid{}, nil
-		}
 		return Bid{}, fmt.Errorf("lotRepo.getLastBid: %w", storage.ErrRepo(err))
 	}
 	return bid, nil
+}
+
+func (r *Repo) getLotBids(ctx context.Context, idLot int64) ([]Bid, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, lot_id, user_id, amount, created_at
+		FROM bids
+		WHERE lot_id = $1
+		ORDER BY id DESC`, idLot)
+	if err != nil {
+		return nil, fmt.Errorf("lotRepo.getLotBids: %w", storage.ErrRepo(err))
+	}
+	bids, err := pgx.CollectRows(rows, pgx.RowToStructByName[Bid])
+	if err != nil {
+		return nil, fmt.Errorf("lotRepo.getLotBids: %w", storage.ErrRepo(err))
+	}
+	if bids == nil {
+		bids = []Bid{}
+	}
+	return bids, nil
 }
 
 func (r *Repo) getUserForUpdate(ctx context.Context, uid uuid.UUID) (user.User, error) {
@@ -233,13 +262,14 @@ func (r *Repo) getUserForUpdate(ctx context.Context, uid uuid.UUID) (user.User, 
 	return u, nil
 }
 
+// changeHold передается контекст, uid и изменение changeHold тоесть увеличить на 10 (changeHold=10) или уменьшить на 20 (changeHold=-20)
 func (r *Repo) changeHold(ctx context.Context, uid uuid.UUID, changeHold int) error {
 	res, err := r.db.Exec(ctx, "UPDATE users SET hold = hold + $1 WHERE id = $2 AND deleted_at IS NULL", changeHold, uid)
 	if err != nil {
-		return fmt.Errorf("userRepo.updateAvatar: %w", storage.ErrRepo(err))
+		return fmt.Errorf("lotRepo.changeHold: %w", storage.ErrRepo(err))
 	}
 	if res.RowsAffected() == 0 {
-		return fmt.Errorf("userRepo.updateAvatar: %w", storage.ErrNotFound)
+		return fmt.Errorf("lotRepo.changeHold: %w", storage.ErrNotFound)
 	}
 	return nil
 }

@@ -1,7 +1,7 @@
 package lot
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
@@ -28,16 +27,14 @@ func NewHandler(service *Service) *Handler {
 }
 
 type reqNewLot struct {
-	ItemID       int64           `json:"item_id"`
-	Status       Status          `json:"status"`
-	StartAmount  int64           `json:"start_amount"`
-	MinStep      int64           `json:"min_step"`
-	Title        string          `json:"title"`
-	Description  json.RawMessage `json:"description"`
-	StartedAt    *time.Time      `json:"started_at"`
-	EndedAt      *time.Time      `json:"ends_at"`
-	AutoActivate bool            `json:"auto_activate,omitempty"`
-	AutoActive   bool            `json:"auto_active,omitempty"`
+	ItemID      int64       `json:"item_id"`
+	Status      Status      `json:"status"`
+	StartAmount int64       `json:"start_amount"`
+	MinStep     int64       `json:"min_step"`
+	Title       string      `json:"title"`
+	Description Description `json:"description"`
+	StartedAt   *time.Time  `json:"started_at"`
+	EndedAt     *time.Time  `json:"ends_at"`
 }
 
 func (r *reqNewLot) check() error {
@@ -66,34 +63,11 @@ func (r *reqNewLot) check() error {
 	if r.StartedAt != nil && r.EndedAt != nil && !r.EndedAt.After(*r.StartedAt) {
 		return errors.New("ends_at must be after started_at")
 	}
-	if len(r.Description) == 0 {
-		r.Description = json.RawMessage("{}")
-	}
-	dec := json.NewDecoder(bytes.NewReader(r.Description))
-	dec.DisallowUnknownFields()
-	var desc Description
-	if err := dec.Decode(&desc); err != nil {
-		return fmt.Errorf("invalid description: %w", err)
-	}
-	if desc.Type != "" {
-		switch desc.Type {
+	if r.Description.Type != "" {
+		switch r.Description.Type {
 		case mimeType.Image, mimeType.Model3D, mimeType.Audio, mimeType.Video, mimeType.Document, mimeType.Archive:
 		default:
 			return errors.New("invalid description type")
-		}
-	}
-	if r.AutoActivate || r.AutoActive || (desc.AutoActivate != nil && *desc.AutoActivate) || (desc.AutoActive != nil && *desc.AutoActive) {
-		t := true
-		r.AutoActivate = true
-		r.AutoActive = true
-		desc.AutoActivate = &t
-		desc.AutoActive = &t
-		if (r.StartedAt == nil || r.EndedAt == nil) && r.Status == PendingReview {
-			return errors.New("started_at and ends_at are required when auto_activate is true")
-		}
-		updatedDesc, err := json.Marshal(desc)
-		if err == nil {
-			r.Description = updatedDesc
 		}
 	}
 	return nil
@@ -235,6 +209,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	lot, err := h.service.createLot(r.Context(), uid, req)
 	if err != nil {
 		apperr.Log(r.Context(), "lotHandler.create.service", err)
+		if errors.Is(err, storage.ErrForbidden) {
+			httpx.WriteResponse(w, httpx.ErrForbidden)
+			return
+		}
 		if errors.Is(err, storage.ErrNotFound) {
 			httpx.WriteResponse(w, httpx.ErrRespNotFound)
 			return
@@ -483,14 +461,46 @@ func (h *Handler) RouterLot(authChain alice.Chain, adminChain alice.Chain) http.
 }
 
 type reqBid struct {
-	Amount         int       `json:"amount"`
-	IdempotencyKey uuid.UUID `json:"idempotency_key"`
+	Amount         int    `json:"amount"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
+func (r *reqBid) check(headerKey string) error {
+	if r.Amount <= 0 {
+		return errors.New("amount must be greater than 0")
+	}
+	key := strings.TrimSpace(r.IdempotencyKey)
+	if key == "" {
+		key = strings.TrimSpace(headerKey)
+	}
+	if key == "" {
+		return errors.New("idempotency_key is required")
+	}
+	r.IdempotencyKey = key
+	return nil
+}
+
+// bid размещает новую ставку на активный лот.
+//
+// @Summary Разместить ставку на лот
+// @Description Размещает новую ставку авторизованного пользователя на активный лот аукциона
+// @Tags bid
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path int true "ID лота"
+// @Param input body reqBid true "Параметры ставки (сумма и ключ идемпотентности)"
+// @Success 200 {object} httpx.Response "Ставка успешно принята"
+// @Failure 400 {object} httpx.Response "Некорректная сумма ставки, меньший шаг или нехватка баланса"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 403 {object} httpx.Response "Продавец не может делать ставки на свой лот"
+// @Failure 404 {object} httpx.Response "Лот не найден или не активен"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/bid/{id} [post]
 func (h *Handler) bid(w http.ResponseWriter, r *http.Request) {
 	uid, err := cfg.GetUID(r.Context())
 	if err != nil {
-		apperr.Log(r.Context(), "lotHandler.activate.GetUID", err)
+		apperr.Log(r.Context(), "lotHandler.bid.GetUID", err)
 		httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
 		return
 	}
@@ -507,11 +517,115 @@ func (h *Handler) bid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err = h.service.bid(r.Context(), id, uid, req.IdempotencyKey, req.Amount); err != nil {
+	if err := req.check(r.Header.Get("Idempotency-Key")); err != nil {
+		apperr.Log(r.Context(), "lotHandler.bid.check", err)
+		httpx.WriteResponse(w, httpx.Response{
+			Code:  http.StatusBadRequest,
+			Error: err.Error(),
+		})
+		return
+	}
+
+	if err = h.service.bid(r.Context(), id, uid, req.Amount); err != nil {
 		apperr.Log(r.Context(), "lotHandler.bid", err)
+		if errors.Is(err, ErrLider) || errors.Is(err, ErrAmountSmall) || errors.Is(err, ErrInsufficientBalance) || errors.Is(err, ErrInvalidReqBody) {
+			httpx.WriteResponse(w, httpx.Response{
+				Code:  http.StatusBadRequest,
+				Error: err.Error(),
+			})
+			return
+		}
+		if errors.Is(err, ErrForbidden) || errors.Is(err, storage.ErrForbidden) {
+			httpx.WriteResponse(w, httpx.Response{
+				Code:  http.StatusForbidden,
+				Error: "forbidden: seller cannot bid on own lot",
+			})
+			return
+		}
+		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, ErrLotNotFound) {
+			httpx.WriteResponse(w, httpx.ErrRespNotFound)
+			return
+		}
 		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
-		//TODO:
+	}
+
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+	})
+}
+
+// streamBids транслирует историю ставок лота через SSE каждые 2 секунды.
+//
+// @Summary SSE поток ставок лота
+// @Description Устанавливает Server-Sent Events соединение и отправляет список ставок каждые 2 секунды
+// @Tags bid
+// @Produce text/event-stream
+// @Param id path int true "ID лота"
+// @Success 200 {array} Bid "Поток ставок"
+// @Failure 400 {object} httpx.Response "Неверный ID лота"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/bid/{id}/stream [get]
+func (h *Handler) streamBids(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		httpx.WriteResponse(w, httpx.Response{
+			Code:  http.StatusInternalServerError,
+			Error: "Streaming unsupported",
+		})
+		return
+	}
+
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	sendBids := func() error {
+		bids, err := h.service.getLotBids(r.Context(), id)
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(bids)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	if err := sendBids(); err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(r.Context().Err(), context.Canceled) {
+			apperr.Log(r.Context(), "lotHandler.streamBids.initial", err)
+		}
+		return
+	}
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if err := sendBids(); err != nil {
+				if !errors.Is(err, context.Canceled) && !errors.Is(r.Context().Err(), context.Canceled) {
+					apperr.Log(r.Context(), "lotHandler.streamBids.tick", err)
+				}
+				return
+			}
+		}
 	}
 }
 
@@ -520,6 +634,7 @@ func (h *Handler) RouterBid(authChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /{id}", h.bid)
+	mux.HandleFunc("GET /{id}/stream", h.streamBids)
 
 	return authChain.Then(mux)
 }

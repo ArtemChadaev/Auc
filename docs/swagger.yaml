@@ -49,7 +49,7 @@ definitions:
       owner_id:
         type: string
       type:
-        type: string
+        $ref: '#/definitions/mimeType.ItemType'
     type: object
   item.confirmUploadReq:
     properties:
@@ -93,29 +93,42 @@ definitions:
       url:
         type: string
     type: object
-  lot.ItemSummary:
+  lot.Bid:
     properties:
-      blur_hash:
-        type: string
-      id:
+      amount:
         type: integer
-      preview:
+      created_at:
+        type: string
+      lot_id:
+        type: integer
+      user_id:
+        type: string
+    type: object
+  lot.Description:
+    properties:
+      auto_activate:
+        type: boolean
+      photo:
+        items:
+          type: string
+        type: array
+      short_text:
+        type: string
+      tags:
+        items:
+          type: string
+        type: array
+      text:
         type: string
       type:
-        type: string
+        $ref: '#/definitions/mimeType.ItemType'
     type: object
   lot.Lot:
     properties:
-      bids_count:
-        type: integer
-      category:
-        type: string
       created_at:
         type: string
-      current_bid:
-        type: integer
       description:
-        $ref: '#/definitions/lot.LotDescription'
+        $ref: '#/definitions/lot.Description'
       ends_at:
         type: string
       finish_amount:
@@ -126,12 +139,8 @@ definitions:
         type: integer
       item_id:
         type: integer
-      item_summary:
-        $ref: '#/definitions/lot.ItemSummary'
       min_step:
         type: integer
-      seller:
-        $ref: '#/definitions/lot.SellerInfo'
       seller_id:
         type: string
       start_amount:
@@ -142,88 +151,58 @@ definitions:
         type: string
       title:
         type: string
-      winner:
-        $ref: '#/definitions/lot.WinnerInfo'
+      winner_id:
+        type: string
     type: object
-  lot.LotDescription:
+  lot.activateReq:
     properties:
-      attributes:
-        additionalProperties:
-          type: string
-        type: object
-      media:
-        items:
-          $ref: '#/definitions/lot.MediaItem'
-        type: array
-      short_text:
+      ends_at:
         type: string
-      text:
+      started_at:
         type: string
     type: object
-  lot.LotListResponse:
+  lot.reqBid:
     properties:
-      items:
-        items:
-          $ref: '#/definitions/lot.Lot'
-        type: array
-      limit:
+      amount:
         type: integer
-      page:
-        type: integer
-      total:
-        type: integer
-      total_pages:
-        type: integer
+      idempotency_key:
+        type: string
     type: object
-  lot.MediaItem:
+  lot.reqNewLot:
     properties:
-      blur_hash:
+      description:
+        $ref: '#/definitions/lot.Description'
+      ends_at:
         type: string
-      caption:
-        type: string
-      duration_sec:
-        type: number
-      height:
+      item_id:
         type: integer
-      id:
-        type: string
-      order:
+      min_step:
         type: integer
-      thumbnail_id:
-        type: string
-      type:
-        $ref: '#/definitions/lot.MediaType'
-      width:
+      start_amount:
         type: integer
+      started_at:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
     type: object
-  lot.MediaType:
+  mimeType.ItemType:
     enum:
     - image
-    - video
     - 3d
+    - audio
+    - video
+    - document
+    - archive
     type: string
     x-enum-varnames:
-    - MediaTypeImage
-    - MediaTypeVideo
-    - MediaType3D
-  lot.SellerInfo:
-    properties:
-      avatar_id:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-      rating:
-        type: number
-    type: object
-  lot.WinnerInfo:
-    properties:
-      id:
-        type: string
-      name:
-        type: string
-    type: object
+    - Image
+    - Model3D
+    - Audio
+    - Video
+    - Document
+    - Archive
   user.Device:
     properties:
       browser:
@@ -493,6 +472,86 @@ paths:
       summary: Получение сессий пользователя
       tags:
       - auth
+  /api/bid/{id}:
+    post:
+      consumes:
+      - application/json
+      description: Размещает новую ставку авторизованного пользователя на активный
+        лот аукциона
+      parameters:
+      - description: ID лота
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Параметры ставки (сумма и ключ идемпотентности)
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/lot.reqBid'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Ставка успешно принята
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "400":
+          description: Некорректная сумма ставки, меньший шаг или нехватка баланса
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "403":
+          description: Продавец не может делать ставки на свой лот
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Лот не найден или не активен
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Разместить ставку на лот
+      tags:
+      - bid
+  /api/bid/{id}/stream:
+    get:
+      description: Устанавливает Server-Sent Events соединение и отправляет список
+        ставок каждые 2 секунды
+      parameters:
+      - description: ID лота
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: Поток ставок
+          schema:
+            items:
+              $ref: '#/definitions/lot.Bid'
+            type: array
+        "400":
+          description: Неверный ID лота
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      summary: SSE поток ставок лота
+      tags:
+      - bid
   /api/document/:
     get:
       description: Возвращает список активных документов или один активный документ
@@ -802,45 +861,7 @@ paths:
       - item
   /api/lot/:
     get:
-      description: Возвращает список лотов аукциона с фильтрацией, сортировкой и пагинацией
-      parameters:
-      - description: Поисковый запрос
-        in: query
-        name: q
-        type: string
-      - description: Алиас для поискового запроса
-        in: query
-        name: search
-        type: string
-      - description: Категория лота
-        in: query
-        name: category
-        type: string
-      - description: Статус лота (draft, pending_review, approved, active, rejected,
-          finished, cancelled)
-        in: query
-        name: status
-        type: string
-      - description: Сортировка (price_asc, price_desc, ending_soon, popular, newest)
-        in: query
-        name: sort
-        type: string
-      - description: Минимальная цена
-        in: query
-        name: min_price
-        type: integer
-      - description: Максимальная цена
-        in: query
-        name: max_price
-        type: integer
-      - description: Номер страницы (по умолчанию 1)
-        in: query
-        name: page
-        type: integer
-      - description: Лимит на страницу (по умолчанию 20, максимум 100)
-        in: query
-        name: limit
-        type: integer
+      description: Возвращает список лотов аукциона со статусами active и finished
       produces:
       - application/json
       responses:
@@ -851,7 +872,9 @@ paths:
             - $ref: '#/definitions/httpx.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/lot.LotListResponse'
+                  items:
+                    $ref: '#/definitions/lot.Lot'
+                  type: array
               type: object
         "500":
           description: Внутренняя ошибка сервера
@@ -860,9 +883,95 @@ paths:
       summary: Получить список лотов
       tags:
       - lot
+    post:
+      consumes:
+      - application/json
+      description: Создает лот на аукционе для принадлежащего пользователю предмета
+        со статусом draft или pending_review
+      parameters:
+      - description: Параметры нового лота
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/lot.reqNewLot'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/lot.Lot'
+              type: object
+        "400":
+          description: Некорректные параметры запроса
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Предмет не найден или не принадлежит пользователю
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "409":
+          description: Лот с данным предметом уже активен
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Создать новый лот
+      tags:
+      - lot
   /api/lot/{id}:
+    delete:
+      description: Отменяет лот продавца, если он еще не завершен и до старта больше
+        часа
+      parameters:
+      - description: ID лота
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "400":
+          description: Неверный ID лота
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Лот не найден, чужой или не может быть отменен
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Отменить лот
+      tags:
+      - lot
     get:
-      description: Возвращает детальную информацию о лоте аукциона
+      description: Возвращает информацию о лоте по его числовому идентификатору
       parameters:
       - description: ID лота
         in: path
@@ -889,7 +998,153 @@ paths:
           description: Лот не найден
           schema:
             $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
       summary: Получить лот по ID
+      tags:
+      - lot
+    put:
+      consumes:
+      - application/json
+      description: Обновляет параметры лота продавцом по его ID (статус draft или
+        pending_review)
+      parameters:
+      - description: ID лота
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Обновленные параметры лота
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/lot.reqNewLot'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/lot.Lot'
+              type: object
+        "400":
+          description: Неверный ID или некорректные параметры
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Лот не найден или не принадлежит пользователю
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "409":
+          description: Конфликт уникальности предмета
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Обновить лот
+      tags:
+      - lot
+  /api/lot/{id}/activate:
+    post:
+      consumes:
+      - application/json
+      description: Переводит лот продавца со статусом approved в статус active для
+        старта торгов
+      parameters:
+      - description: ID лота
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Опциональные даты начала и окончания торгов
+        in: body
+        name: input
+        schema:
+          $ref: '#/definitions/lot.activateReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/lot.Lot'
+              type: object
+        "400":
+          description: Неверный ID лота или лот не в статусе approved
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "403":
+          description: Доступ запрещен
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "404":
+          description: Лот не найден
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "409":
+          description: Лот с данным предметом уже активен
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Активировать лот
+      tags:
+      - lot
+  /api/lot/my:
+    get:
+      description: Возвращает все лоты, созданные текущим пользователем
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/lot.Lot'
+                  type: array
+              type: object
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Получить мои лоты
       tags:
       - lot
   /api/upload/cancel:

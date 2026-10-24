@@ -16,6 +16,7 @@ var (
 	ErrDeadlock            = apperr.NewAppErrorString("deadlock", 4)
 	ErrDB                  = apperr.NewAppErrorString("database error", 4)
 	ErrCheckViolation      = apperr.NewAppErrorString("check violation", -4)
+	ErrForbidden           = apperr.NewAppErrorString("forbidden", -4)
 )
 
 func ErrRepo(err error) error {

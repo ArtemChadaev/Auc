@@ -107,7 +107,6 @@ create table bids (
     lot_id bigint not null references lots(id),
     user_id uuid not null references users(id),
     amount int not null constraint amount_greater_zero check (amount > 0),
-    idempotency_key uuid not null unique,
     created_at timestamptz not null default now(),
     unique (id, lot_id)
 );

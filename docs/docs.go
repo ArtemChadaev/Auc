@@ -304,6 +304,126 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/bid/{id}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Размещает новую ставку авторизованного пользователя на активный лот аукциона",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bid"
+                ],
+                "summary": "Разместить ставку на лот",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID лота",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Параметры ставки (сумма и ключ идемпотентности)",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/lot.reqBid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Ставка успешно принята",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Некорректная сумма ставки, меньший шаг или нехватка баланса",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Не авторизован",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Продавец не может делать ставки на свой лот",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Лот не найден или не активен",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Внутренняя ошибка сервера",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/bid/{id}/stream": {
+            "get": {
+                "description": "Устанавливает Server-Sent Events соединение и отправляет список ставок каждые 2 секунды",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "bid"
+                ],
+                "summary": "SSE поток ставок лота",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID лота",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Поток ставок",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/lot.Bid"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Неверный ID лота",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Внутренняя ошибка сервера",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/document/": {
             "get": {
                 "description": "Возвращает список активных документов или один активный документ по query-параметру name",
@@ -807,7 +927,7 @@ const docTemplate = `{
         },
         "/api/lot/": {
             "get": {
-                "description": "Возвращает список лотов аукциона с фильтрацией, сортировкой и пагинацией",
+                "description": "Возвращает список лотов аукциона со статусами active и finished",
                 "produces": [
                     "application/json"
                 ],
@@ -815,62 +935,6 @@ const docTemplate = `{
                     "lot"
                 ],
                 "summary": "Получить список лотов",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Поисковый запрос",
-                        "name": "q",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Алиас для поискового запроса",
-                        "name": "search",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Категория лота",
-                        "name": "category",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Статус лота (draft, pending_review, approved, active, rejected, finished, cancelled)",
-                        "name": "status",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Сортировка (price_asc, price_desc, ending_soon, popular, newest)",
-                        "name": "sort",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Минимальная цена",
-                        "name": "min_price",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Максимальная цена",
-                        "name": "max_price",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Номер страницы (по умолчанию 1)",
-                        "name": "page",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Лимит на страницу (по умолчанию 20, максимум 100)",
-                        "name": "limit",
-                        "in": "query"
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -883,7 +947,10 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/lot.LotListResponse"
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/lot.Lot"
+                                            }
                                         }
                                     }
                                 }
@@ -897,11 +964,142 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Создает лот на аукционе для принадлежащего пользователю предмета со статусом draft или pending_review",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lot"
+                ],
+                "summary": "Создать новый лот",
+                "parameters": [
+                    {
+                        "description": "Параметры нового лота",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/lot.reqNewLot"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpx.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/lot.Lot"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Некорректные параметры запроса",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Не авторизован",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Предмет не найден или не принадлежит пользователю",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Лот с данным предметом уже активен",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Внутренняя ошибка сервера",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/lot/my": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Возвращает все лоты, созданные текущим пользователем",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lot"
+                ],
+                "summary": "Получить мои лоты",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpx.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/lot.Lot"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Не авторизован",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Внутренняя ошибка сервера",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    }
+                }
             }
         },
         "/api/lot/{id}": {
             "get": {
-                "description": "Возвращает детальную информацию о лоте аукциона",
+                "description": "Возвращает информацию о лоте по его числовому идентификатору",
                 "produces": [
                     "application/json"
                 ],
@@ -945,6 +1143,247 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Лот не найден",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Внутренняя ошибка сервера",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Обновляет параметры лота продавцом по его ID (статус draft или pending_review)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lot"
+                ],
+                "summary": "Обновить лот",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID лота",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Обновленные параметры лота",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/lot.reqNewLot"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpx.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/lot.Lot"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Неверный ID или некорректные параметры",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Не авторизован",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Лот не найден или не принадлежит пользователю",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Конфликт уникальности предмета",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Внутренняя ошибка сервера",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Отменяет лот продавца, если он еще не завершен и до старта больше часа",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lot"
+                ],
+                "summary": "Отменить лот",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID лота",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Неверный ID лота",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Не авторизован",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Лот не найден, чужой или не может быть отменен",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Внутренняя ошибка сервера",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/lot/{id}/activate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Переводит лот продавца со статусом approved в статус active для старта торгов",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lot"
+                ],
+                "summary": "Активировать лот",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID лота",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Опциональные даты начала и окончания торгов",
+                        "name": "input",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/lot.activateReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpx.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/lot.Lot"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Неверный ID лота или лот не в статусе approved",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Не авторизован",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Доступ запрещен",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Лот не найден",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Лот с данным предметом уже активен",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Внутренняя ошибка сервера",
                         "schema": {
                             "$ref": "#/definitions/httpx.Response"
                         }
@@ -1548,7 +1987,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "type": {
-                    "type": "string"
+                    "$ref": "#/definitions/mimeType.ItemType"
                 }
             }
         },
@@ -1618,40 +2057,60 @@ const docTemplate = `{
                 }
             }
         },
-        "lot.ItemSummary": {
+        "lot.Bid": {
             "type": "object",
             "properties": {
-                "blur_hash": {
-                    "type": "string"
-                },
-                "id": {
+                "amount": {
                     "type": "integer"
                 },
-                "preview": {
+                "created_at": {
+                    "type": "string"
+                },
+                "lot_id": {
+                    "type": "integer"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "lot.Description": {
+            "type": "object",
+            "properties": {
+                "auto_activate": {
+                    "type": "boolean"
+                },
+                "photo": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "short_text": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "text": {
                     "type": "string"
                 },
                 "type": {
-                    "type": "string"
+                    "$ref": "#/definitions/mimeType.ItemType"
                 }
             }
         },
         "lot.Lot": {
             "type": "object",
             "properties": {
-                "bids_count": {
-                    "type": "integer"
-                },
-                "category": {
-                    "type": "string"
-                },
                 "created_at": {
                     "type": "string"
                 },
-                "current_bid": {
-                    "type": "integer"
-                },
                 "description": {
-                    "$ref": "#/definitions/lot.LotDescription"
+                    "$ref": "#/definitions/lot.Description"
                 },
                 "ends_at": {
                     "type": "string"
@@ -1668,14 +2127,8 @@ const docTemplate = `{
                 "item_id": {
                     "type": "integer"
                 },
-                "item_summary": {
-                    "$ref": "#/definitions/lot.ItemSummary"
-                },
                 "min_step": {
                     "type": "integer"
-                },
-                "seller": {
-                    "$ref": "#/definitions/lot.SellerInfo"
                 },
                 "seller_id": {
                     "type": "string"
@@ -1692,129 +2145,80 @@ const docTemplate = `{
                 "title": {
                     "type": "string"
                 },
-                "winner": {
-                    "$ref": "#/definitions/lot.WinnerInfo"
+                "winner_id": {
+                    "type": "string"
                 }
             }
         },
-        "lot.LotDescription": {
+        "lot.activateReq": {
             "type": "object",
             "properties": {
-                "attributes": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "media": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/lot.MediaItem"
-                    }
-                },
-                "short_text": {
+                "ends_at": {
                     "type": "string"
                 },
-                "text": {
+                "started_at": {
                     "type": "string"
                 }
             }
         },
-        "lot.LotListResponse": {
+        "lot.reqBid": {
             "type": "object",
             "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/lot.Lot"
-                    }
-                },
-                "limit": {
+                "amount": {
                     "type": "integer"
                 },
-                "page": {
-                    "type": "integer"
-                },
-                "total": {
-                    "type": "integer"
-                },
-                "total_pages": {
-                    "type": "integer"
+                "idempotency_key": {
+                    "type": "string"
                 }
             }
         },
-        "lot.MediaItem": {
+        "lot.reqNewLot": {
             "type": "object",
             "properties": {
-                "blur_hash": {
+                "description": {
+                    "$ref": "#/definitions/lot.Description"
+                },
+                "ends_at": {
                     "type": "string"
                 },
-                "caption": {
-                    "type": "string"
-                },
-                "duration_sec": {
-                    "type": "number"
-                },
-                "height": {
+                "item_id": {
                     "type": "integer"
                 },
-                "id": {
-                    "type": "string"
-                },
-                "order": {
+                "min_step": {
                     "type": "integer"
                 },
-                "thumbnail_id": {
+                "start_amount": {
+                    "type": "integer"
+                },
+                "started_at": {
                     "type": "string"
                 },
-                "type": {
-                    "$ref": "#/definitions/lot.MediaType"
+                "status": {
+                    "type": "string"
                 },
-                "width": {
-                    "type": "integer"
+                "title": {
+                    "type": "string"
                 }
             }
         },
-        "lot.MediaType": {
+        "mimeType.ItemType": {
             "type": "string",
             "enum": [
                 "image",
+                "3d",
+                "audio",
                 "video",
-                "3d"
+                "document",
+                "archive"
             ],
             "x-enum-varnames": [
-                "MediaTypeImage",
-                "MediaTypeVideo",
-                "MediaType3D"
+                "Image",
+                "Model3D",
+                "Audio",
+                "Video",
+                "Document",
+                "Archive"
             ]
-        },
-        "lot.SellerInfo": {
-            "type": "object",
-            "properties": {
-                "avatar_id": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "rating": {
-                    "type": "number"
-                }
-            }
-        },
-        "lot.WinnerInfo": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
         },
         "user.Device": {
             "type": "object",

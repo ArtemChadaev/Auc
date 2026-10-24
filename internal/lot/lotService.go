@@ -1,12 +1,15 @@
 package lot
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"time"
 	"uuid"
 
+	"github.com/ArtemChadaev/Auction/cmd/storage"
+	"github.com/ArtemChadaev/Auction/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -119,7 +122,109 @@ func (s *Service) approve(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *Service) bid(ctx context.Context, idLot int64, uid, idempotencyKey uuid.UUID, amount int) error {
+/*
+АНАЛИЗ SQL-КОДА И 3 ПРИМЕРА ВЫПОЛНЕНИЯ:
+
+================================================================================
+Пример 1. Первая ставка на лот (ставок еще нет, isFirst == true, storage.ErrNotFound)
+Лот id=1, start_amount=1000, min_step=100.
+Пользователь uid='0192e4a1-0001-7000-8000-000000000001' ставит amount=1000.
+
+ 1. Начало транзакции:
+    BEGIN;
+
+ 2. Блокировка лота по ID:
+    SELECT * FROM lots WHERE id = 1 AND status = 'active' FOR UPDATE;
+
+ 3. Запрос последней ставки (возвращает 0 строк -> storage.ErrNotFound):
+    SELECT * FROM bids WHERE lot_id = 1 ORDER BY id desc LIMIT 1;
+
+ 4. Блокировка и получение данных пользователя:
+    SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at
+    FROM users WHERE id = '0192e4a1-0001-7000-8000-000000000001' AND deleted_at IS NULL FOR UPDATE;
+
+ 5. Вставка новой ставки:
+    INSERT INTO bids (lot_id, user_id, amount) VALUES (1, '0192e4a1-0001-7000-8000-000000000001', 1000);
+
+ 6. Заморозка средств (hold += 1000):
+    UPDATE users SET hold = hold + 1000 WHERE id = '0192e4a1-0001-7000-8000-000000000001' AND deleted_at IS NULL;
+
+ 7. Фиксация транзакции:
+    COMMIT;
+
+================================================================================
+Пример 2. Перебитие ставки другим пользователем (isFirst == false, защита от deadlock)
+Текущая ставка: 1000 от '0192e4a1-0001-7000-8000-000000000001'.
+Новый участник uid='0192e4a1-0002-7000-8000-000000000002' ставит amount=1200.
+
+ 1. Начало транзакции:
+    BEGIN;
+
+ 2. Блокировка лота:
+    SELECT * FROM lots WHERE id = 1 AND status = 'active' FOR UPDATE;
+
+ 3. Получение последней ставки (находит ставку на 1000 от пользователя 1):
+    SELECT * FROM bids WHERE lot_id = 1 ORDER BY id desc LIMIT 1;
+
+ 4. Упорядочивание firstUID и secondUID (по bytes.Compare) для предотвращения deadlock:
+    firstUID = '0192e4a1-0001-7000-8000-000000000001', secondUID = '0192e4a1-0002-7000-8000-000000000002'
+
+ 5. Блокировка первого пользователя по порядку:
+    SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at
+    FROM users WHERE id = '0192e4a1-0001-7000-8000-000000000001' AND deleted_at IS NULL FOR UPDATE;
+
+ 6. Блокировка второго пользователя по порядку:
+    SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at
+    FROM users WHERE id = '0192e4a1-0002-7000-8000-000000000002' AND deleted_at IS NULL FOR UPDATE;
+
+ 7. Создание новой ставки:
+    INSERT INTO bids (lot_id, user_id, amount) VALUES (1, '0192e4a1-0002-7000-8000-000000000002', 1200);
+
+ 8. Увеличение hold у нового лидера (+1200):
+    UPDATE users SET hold = hold + 1200 WHERE id = '0192e4a1-0002-7000-8000-000000000002' AND deleted_at IS NULL;
+
+ 9. Разморозка hold у предыдущего лидера (-1000):
+    UPDATE users SET hold = hold + -1000 WHERE id = '0192e4a1-0001-7000-8000-000000000001' AND deleted_at IS NULL;
+
+ 10. Фиксация транзакции:
+    COMMIT;
+
+================================================================================
+Пример 3. Ошибка / Откат (Rollback): Текущий лидер пытается перебить сам себя
+Лидер uid='0192e4a1-0002-7000-8000-000000000002' пытается снова поставить на лот 1.
+
+ 1. Начало транзакции:
+    BEGIN;
+
+ 2. Блокировка лота:
+    SELECT * FROM lots WHERE id = 1 AND status = 'active' FOR UPDATE;
+
+ 3. Получение последней ставки:
+    SELECT * FROM bids WHERE lot_id = 1 ORDER BY id desc LIMIT 1;
+    -- Вернуло: user_id = '0192e4a1-0002-7000-8000-000000000002'
+
+ 4. В коде срабатывает проверка uid == bid.UserId -> возвращается ErrLider.
+    defer tx.Rollback(ctx) откатывает транзакцию:
+    ROLLBACK;
+
+================================================================================
+АНАЛИЗ SQL:
+ 1. getByIdForUpdate:
+    SELECT * FROM lots WHERE id = $1 AND status = $2 FOR UPDATE
+    - Запрос гарантирует выборку только активного лота и его блокировку.
+ 2. getLastBid:
+    SELECT * FROM bids WHERE lot_id = $1 ORDER BY id desc LIMIT 1
+    - ORDER BY id desc детерминирован и надежнее ORDER BY created_at desc.
+ 3. createBid:
+    INSERT INTO bids (lot_id, user_id, amount) VALUES ($1, $2, $3)
+    - Явное перечисление колонок защищает от ошибок при изменении схемы таблицы.
+ 4. changeHold:
+    UPDATE users SET hold = hold + $1 WHERE id = $2 AND deleted_at IS NULL
+    - Взаимные блокировки исключены, так как обе строки пользователей блокируются
+    в строго упорядоченном виде (по возрастанию UUID) через getUserForUpdate перед изменением.
+*/
+func (s *Service) bid(ctx context.Context, idLot int64, uid uuid.UUID, amount int) error {
+	// Первоначальная проверка и начало транзакции
 	if amount <= 0 {
 		return fmt.Errorf("lotService.bid: %w", ErrInvalidReqBody)
 	}
@@ -130,51 +235,90 @@ func (s *Service) bid(ctx context.Context, idLot int64, uid, idempotencyKey uuid
 	defer tx.Rollback(ctx)
 	txRepo := s.repo.WithTx(tx)
 
+	// Получение лота с for update (Другие ставки на этот лот ждут завершения)
 	lot, err := txRepo.getByIdForUpdate(ctx, idLot)
 	if err != nil {
 		return fmt.Errorf("lotService.bid: %w", err)
 	}
+
 	bid, err := txRepo.getLastBid(ctx, idLot)
-	if err != nil {
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return fmt.Errorf("lotService.bid: %w", err)
 	}
-	if bid.IdempotencyKey == idempotencyKey {
-		return nil
+	if err == nil && uid == bid.UserId {
+		return fmt.Errorf("lotService.bid: %w", ErrLider)
 	}
-	if amount < bid.Amount+lot.MinStep {
-		//TODO: Сделать ошибки
-		return errors.New("lotService.bid: amount is too small")
+
+	isFirst := false
+	if errors.Is(err, storage.ErrNotFound) {
+		isFirst = true
 	}
-	user, err := txRepo.getUserForUpdate(ctx, uid)
-	if err != nil {
+	var currentUser user.User
+	if isFirst {
+		if amount < lot.StartAmount {
+			return fmt.Errorf("lotService.bid: %w", ErrAmountSmall)
+		}
+		currentUser, err = txRepo.getUserForUpdate(ctx, uid)
+		if err != nil {
+			return fmt.Errorf("lotService.bid: %w", err)
+		}
+	} else {
+		// У нас 2 пользователя чтобы не было deadlock всегда по порядку делаем select for update
+		if amount < bid.Amount+lot.MinStep {
+			return fmt.Errorf("lotService.bid: %w", ErrAmountSmall)
+		}
+		firstUID, secondUID := uid, bid.UserId
+		if bytes.Compare(firstUID[:], secondUID[:]) > 0 {
+			firstUID, secondUID = secondUID, firstUID
+		}
+		var u1, u2 user.User
+		// 1. Блокируем первого по порядку
+		u1, err = txRepo.getUserForUpdate(ctx, firstUID)
+		if err != nil {
+			return fmt.Errorf("lotService.bid: %w", err)
+		}
+
+		// 2. Блокируем второго по порядку
+		u2, err = txRepo.getUserForUpdate(ctx, secondUID)
+		if err != nil {
+			return fmt.Errorf("lotService.bid: %w", err)
+		}
+
+		// Определяем, кто из них текущий пользователь, чтобы проверить баланс
+		if u1.ID == uid {
+			currentUser = u1
+		} else {
+			currentUser = u2
+		}
+	}
+
+	if amount > currentUser.Balance-currentUser.Hold {
+		return fmt.Errorf("lotService.bid: %w", ErrInsufficientBalance)
+	}
+	if err = txRepo.createBid(ctx, idLot, currentUser.ID, amount); err != nil {
+		return fmt.Errorf("lotService.bid: %w", err)
+	}
+	if err = txRepo.changeHold(ctx, currentUser.ID, amount); err != nil {
 		return fmt.Errorf("lotService.bid: %w", err)
 	}
 
-	if uid == bid.UserId {
-		if amount < (user.Balance - user.Hold + bid.Amount) {
-			return errors.New("lotService.bid: amount is too small")
-		}
-		if err = txRepo.createBid(ctx, idLot, uid, idempotencyKey, amount); err != nil {
+	if !isFirst {
+		if err = txRepo.changeHold(ctx, bid.UserId, -bid.Amount); err != nil {
 			return fmt.Errorf("lotService.bid: %w", err)
 		}
-		if err = txRepo.changeHold(ctx, uid, amount-bid.Amount); err != nil {
-			return fmt.Errorf("lotService.bid: %w", err)
-		}
-		return nil
-	}
-	if amount < user.Balance-user.Hold {
-		return errors.New("lotService.bid: amount is too small")
-	}
-	if err = txRepo.createBid(ctx, idLot, uid, idempotencyKey, amount); err != nil {
-		return fmt.Errorf("lotService.bid: %w", err)
-	}
-	if err = txRepo.changeHold(ctx, uid, amount); err != nil {
-		return fmt.Errorf("lotService.bid: %w", err)
-	}
-	if err = txRepo.changeHold(ctx, bid.UserId, -bid.Amount); err != nil {
-		return fmt.Errorf("lotService.bid: %w", err)
 	}
 
-	_ = tx.Commit(ctx)
+	err = tx.Commit(ctx)
+	if err != nil {
+		return fmt.Errorf("lotService.bid: %w", err)
+	}
 	return nil
+}
+
+func (s *Service) getLotBids(ctx context.Context, idLot int64) ([]Bid, error) {
+	bids, err := s.repo.getLotBids(ctx, idLot)
+	if err != nil {
+		return nil, fmt.Errorf("lotService.getLotBids: %w", err)
+	}
+	return bids, nil
 }

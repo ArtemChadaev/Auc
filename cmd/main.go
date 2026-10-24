@@ -81,7 +81,7 @@ func main() {
 	}
 
 	// valkey
-	valkeyClient, err := valkey.NewClient(ctx, valkey.Config{
+	vk, err := valkey.NewClient(ctx, valkey.Config{
 		Host: cfg.Cfg.HostValkey,
 		Port: cfg.Cfg.PortValkey,
 	})
@@ -89,11 +89,11 @@ func main() {
 		slog.Error("main.valkey", "error", err)
 		return
 	}
-	defer valkeyClient.Close()
+	defer vk.Close()
 
 	// http
 	mux := http.NewServeMux()
-	globalChain := alice.New(middleware.Logger, middleware.MaxBodySize(5<<20))
+	globalChain := alice.New(middleware.Logger, middleware.MaxBodySize(5<<20), middleware.Idempotency(vk))
 	authChain := alice.New(middleware.AuthAccessToken)
 	adminChain := alice.New(middleware.AuthAdmin)
 	// user
@@ -107,7 +107,7 @@ func main() {
 	mux.Handle("/api/user/", http.StripPrefix("/api/user", userHandler.RoutesUser(authChain)))
 
 	// item
-	itemService := item.NewService(pool, globalS3, item.NewRepo(pool), valkeyClient)
+	itemService := item.NewService(pool, globalS3, item.NewRepo(pool), vk)
 	go itemService.RecoverPendingUploads(ctx)
 	itemHandler := item.NewHandler(itemService)
 	mux.Handle("/api/upload/", http.StripPrefix("/api/upload", itemHandler.RouterUpload(authChain)))
@@ -122,6 +122,7 @@ func main() {
 	//lotService.FinishLots()
 	lotHandler := lot.NewHandler(lotService)
 	mux.Handle("/api/lot/", http.StripPrefix("/api/lot", lotHandler.RouterLot(authChain, adminChain)))
+	mux.Handle("/api/bid/", http.StripPrefix("/api/bid", lotHandler.RouterBid(authChain)))
 
 	srv := &http.Server{
 		Addr:              ":8080",

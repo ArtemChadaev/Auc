@@ -1,0 +1,122 @@
+﻿[
+    {
+        "Index":  1,
+        "FileName":  "file_01.jpg",
+        "Size":  16112,
+        "SHA256":  "194117eb1e0f8725eb7e928985313fe8d39eb557c60c8dd9cf821688824f97c2"
+    },
+    {
+        "Index":  2,
+        "FileName":  "file_02.jpg",
+        "Size":  15715,
+        "SHA256":  "c8501ce2c8365f1cb6b8364133a9e858fe79aa6774241edff95242599614596b"
+    },
+    {
+        "Index":  3,
+        "FileName":  "file_03.jpg",
+        "Size":  15418,
+        "SHA256":  "a785cd3b1071a9820bb108fb175a97e40746f7002017b30549e5f1465b26bfa6"
+    },
+    {
+        "Index":  4,
+        "FileName":  "file_04.jpg",
+        "Size":  15072,
+        "SHA256":  "eb56f336ac7ed0eac609e0d732593986f7c44746fa10c4fc32c503a0f8c7e251"
+    },
+    {
+        "Index":  5,
+        "FileName":  "file_05.jpg",
+        "Size":  15487,
+        "SHA256":  "d31181fe3723f3af5624ede680bac10d20d3f6894148f442d0b6214cd7f33dd9"
+    },
+    {
+        "Index":  6,
+        "FileName":  "file_06.jpg",
+        "Size":  16108,
+        "SHA256":  "c3776c0040181f77ce20c686f8377d5bf73adfbc05cab41080b26ccabc2392c3"
+    },
+    {
+        "Index":  7,
+        "FileName":  "file_07.jpg",
+        "Size":  16275,
+        "SHA256":  "285a28212555a8afebd2d2747efc667abb07b657cd8458005de6a1f0ec9eed82"
+    },
+    {
+        "Index":  8,
+        "FileName":  "file_08.jpg",
+        "Size":  16013,
+        "SHA256":  "9c370f2100c31e332a306649b6277fa395c39657f387fcce78be84cb6554b774"
+    },
+    {
+        "Index":  9,
+        "FileName":  "file_09.jpg",
+        "Size":  15478,
+        "SHA256":  "ec2cafbcf97e2965144ecafddd6342ecb6e13b500edb055d66981d8519a714a0"
+    },
+    {
+        "Index":  10,
+        "FileName":  "file_10.jpg",
+        "Size":  14973,
+        "SHA256":  "8e8e18475d0ee3ed2c2666faa8a3c6222b24456528e4cd4beeec5f36ad9c539a"
+    },
+    {
+        "Index":  11,
+        "FileName":  "file_11.jpg",
+        "Size":  19962,
+        "SHA256":  "595372e236cc2e8788d9d30ea28d5d8efa43b6dc3aae2c5177699e045b1d2c28"
+    },
+    {
+        "Index":  12,
+        "FileName":  "file_12.jpg",
+        "Size":  19792,
+        "SHA256":  "f131435d0eb650928288581d54837850290ffe4c06983ab90b439385cf8eb914"
+    },
+    {
+        "Index":  13,
+        "FileName":  "file_13.jpg",
+        "Size":  19523,
+        "SHA256":  "3ac5ca8d2238aa03859bb3418a75557e5a0419886f393d4a62be3402436331ec"
+    },
+    {
+        "Index":  14,
+        "FileName":  "file_14.jpg",
+        "Size":  19011,
+        "SHA256":  "5e65c579d5114e84fb73b6a785307b61285ba704fba37e84ae74626de8234154"
+    },
+    {
+        "Index":  15,
+        "FileName":  "file_15.jpg",
+        "Size":  18711,
+        "SHA256":  "a9742b4577547240c22ebf5101892647875d369292a10cd9c4e46cb134bebcb0"
+    },
+    {
+        "Index":  16,
+        "FileName":  "file_16.jpg",
+        "Size":  18822,
+        "SHA256":  "db1e407ce2df4ca2de46e46ee873e0c653433238889d2e04eb8662acfd624cd7"
+    },
+    {
+        "Index":  17,
+        "FileName":  "file_17.jpg",
+        "Size":  19076,
+        "SHA256":  "ec7ee806057658224b81d8e10554ddda5b7dcbcd704bc78e51050236eda80eb7"
+    },
+    {
+        "Index":  18,
+        "FileName":  "file_18.jpg",
+        "Size":  20260,
+        "SHA256":  "9f28a74794bc872b66421e5f9a13389605aa6a16118f8157d10729976d9230ab"
+    },
+    {
+        "Index":  19,
+        "FileName":  "file_19.jpg",
+        "Size":  20064,
+        "SHA256":  "508db57cfc207d69f4c1d67c54a936d6c35b2f54b080a7454bf71b42ca7d6a1c"
+    },
+    {
+        "Index":  20,
+        "FileName":  "file_20.jpg",
+        "Size":  19787,
+        "SHA256":  "58560ac442e7a06ec41298757c08adec282bcffdeefbbfd8106d7091dede251a"
+    }
+]
