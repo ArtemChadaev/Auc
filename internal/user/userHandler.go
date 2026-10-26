@@ -164,6 +164,7 @@ type refreshIdReq struct {
 // @Description Завершает указанные refresh-сессии пользователя. Требует авторизации
 // @Tags auth
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept json
 // @Produce json
 // @Param input body refreshIdReq true "ID сессий для завершения"
@@ -202,6 +203,7 @@ type findRefreshReq struct {
 // @Description Возвращает список сессий пользователя (текущих или всех). Требует авторизации
 // @Tags auth
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept json
 // @Produce json
 // @Param input body findRefreshReq true "Фильтр сессий"
@@ -317,6 +319,7 @@ func (h *Handler) RoutesAuth(authChain alice.Chain) http.Handler {
 // @Description Возвращает данные текущего авторизованного пользователя
 // @Tags user
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Produce json
 // @Success 200 {object} httpx.Response{data=User}
 // @Failure 401 {object} httpx.Response "Не авторизован"
@@ -346,6 +349,7 @@ type newNameReq struct {
 // @Description Изменяет отображаемое имя текущего пользователя
 // @Tags user
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept json
 // @Produce json
 // @Param input body newNameReq true "Новое имя пользователя"
@@ -379,6 +383,7 @@ func (h *Handler) patchUserName(w http.ResponseWriter, r *http.Request) {
 // @Description Выполняет мягкое удаление профиля текущего пользователя
 // @Tags user
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Produce json
 // @Success 200 {object} httpx.Response
 // @Failure 401 {object} httpx.Response "Не авторизован"
@@ -410,6 +415,7 @@ type avatarResp struct {
 // @Description Загружает и устанавливает квадратный аватар пользователя
 // @Tags user
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept multipart/form-data
 // @Produce json
 // @Param file formData file true "Файл изображения аватара (квадратный)"
@@ -436,8 +442,7 @@ func (h *Handler) updateAvatar(w http.ResponseWriter, r *http.Request) {
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			httpx.WriteResponse(w, httpx.ErrRespReqEntityTooLarge)
 			return
 		}
@@ -479,6 +484,41 @@ func (h *Handler) updateAvatar(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// freeCoin пополняет баланс пользователя бесплатными монетами.
+//
+// @Summary Получить бесплатные монеты
+// @Description Начисляет 1000 бесплатных монет на баланс авторизованного пользователя
+// @Tags user
+// @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
+// @Produce json
+// @Success 200 {object} httpx.Response{data=User} "Баланс успешно пополнен"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/user/me/freeCoin [get]
+func (h *Handler) freeCoin(w http.ResponseWriter, r *http.Request) {
+	uid, err := cfg.GetUID(r.Context())
+	if err != nil {
+		apperr.Log(r.Context(), "freeCoin.GetUID", err)
+		httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
+		return
+	}
+	if err = h.service.changeBalance(r.Context(), uid, 1000); err != nil {
+		apperr.Log(r.Context(), "freeCoin.changeBalance", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+		return
+	}
+
+	user, err := h.service.getUser(r.Context(), uid)
+	if err != nil {
+		apperr.Log(r.Context(), "freeCoin.getUser", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+		return
+	}
+
+	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK, Data: user})
+}
+
 // RoutesUser /api/user
 func (h *Handler) RoutesUser(authChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
@@ -486,6 +526,7 @@ func (h *Handler) RoutesUser(authChain alice.Chain) http.Handler {
 	mux.HandleFunc("PATCH /name", h.patchUserName)
 	mux.HandleFunc("DELETE /me", h.deleteUser)
 	mux.HandleFunc("PUT /me/avatar", h.updateAvatar)
+	mux.HandleFunc("GET /me/freeCoin", h.freeCoin)
 
 	return authChain.Then(mux)
 }

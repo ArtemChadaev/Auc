@@ -1,22 +1,36 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router';
-import { Gavel, Loader2, Plus, Eye, ArrowLeft, Calendar, Clock, AlertCircle } from 'lucide-react';
+import {
+  Gavel,
+  Loader2,
+  Plus,
+  Eye,
+  ArrowLeft,
+  Calendar,
+  Clock,
+  AlertCircle,
+  Sparkles,
+  Edit3,
+  Play,
+  RotateCcw,
+  CheckCircle2,
+} from 'lucide-react';
 import { useAuth } from '~/hooks/useAuth';
 import { listUserItems } from '~/api/items';
-import { createLot } from '~/api/lots';
+import { createLot, getMyLots, updateLot, activateLot, getLot, cacheLot } from '~/api/lots';
 import type { Item, Lot } from '~/api/types';
 import { LotCard } from '~/components/lot/LotCard';
 import { ErrorAlert } from '~/components/feedback/ErrorAlert';
 
-// 6 категорий строго в соответствии с Go itemDomain.go
-const CATEGORIES = [
-  '3D Модели',
-  'Цифровой Арт',
-  'Аудио',
-  'Видео',
-  'Документы',
-  'Архивы',
-];
+// Соответствие типа предмета категории аукциона
+export const ITEM_TYPE_TO_CATEGORY: Record<string, string> = {
+  '3d': '3D Модели',
+  image: 'Цифровой Арт',
+  audio: 'Аудио',
+  video: 'Видео',
+  document: 'Документы',
+  archive: 'Архивы',
+};
 
 type QuickDuration = 'hour' | 'day' | 'week';
 
@@ -36,7 +50,6 @@ function getDefaultStartDate(): Date {
   const d = new Date();
   d.setDate(d.getDate() + 1);
   d.setHours(8, 0, 0, 0);
-  // Если вдруг завтра в 08:00 меньше чем через час от текущего момента
   if (d.getTime() - Date.now() < 3600 * 1000) {
     d.setTime(Date.now() + 3600 * 1000 + 10 * 60 * 1000);
   }
@@ -58,20 +71,37 @@ function calculateEndDate(start: Date, duration: QuickDuration): Date {
 export default function CreateLotPage() {
   const { user, isAuthenticated, loading: authLoading } = useAuth();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const preselectedItemId = searchParams.get('item_id');
+  const editIdParam = searchParams.get('edit_id');
 
   const [items, setItems] = useState<Item[]>([]);
+  const [myLots, setMyLots] = useState<Lot[]>([]);
+
+  // Режим редактирования существующего лота
+  const [editingLotId, setEditingLotId] = useState<number | null>(
+    editIdParam ? Number(editIdParam) : null
+  );
+  const [editingLotStatus, setEditingLotStatus] = useState<string | null>(null);
+
   const [selectedItemId, setSelectedItemId] = useState<number | null>(
     preselectedItemId ? Number(preselectedItemId) : null
   );
 
+  const selectedItem = items.find((it) => it.id === selectedItemId);
+  const category = selectedItem
+    ? ITEM_TYPE_TO_CATEGORY[selectedItem.type] || 'Цифровой Арт'
+    : 'Цифровой Арт';
+
   const [title, setTitle] = useState('');
-  const [category, setCategory] = useState(CATEGORIES[0]);
   const [shortText, setShortText] = useState('');
   const [text, setText] = useState('');
   const [startAmount, setStartAmount] = useState(5000);
   const [minStep, setMinStep] = useState(250);
+
+  // Галочки draft и auto_activate
+  const [isDraft, setIsDraft] = useState(false);
+  const [autoActivate, setAutoActivate] = useState(true);
 
   // Даты старта и окончания
   const [startDateStr, setStartDateStr] = useState(() => toLocalISOString(getDefaultStartDate()));
@@ -81,28 +111,89 @@ export default function CreateLotPage() {
   );
 
   const [submitting, setSubmitting] = useState(false);
+  const [activating, setActivating] = useState(false);
+  const [activateSuccess, setActivateSuccess] = useState<string | null>(null);
   const [error, setError] = useState<unknown | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
+  // Загрузка предметов и лотов пользователя
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       navigate('/login');
       return;
     }
     if (isAuthenticated) {
-      listUserItems()
-        .then((data) => {
-          setItems(data);
-          if (!selectedItemId && data.length > 0) {
-            setSelectedItemId(data[0].id);
-            if (data[0].metadata?.title) {
-              setTitle(data[0].metadata.title as string);
+      Promise.all([listUserItems().catch(() => []), getMyLots().catch(() => [])])
+        .then(([itemsData, lotsData]) => {
+          setItems(itemsData);
+          setMyLots(lotsData);
+
+          // Если передан edit_id через URL, загружаем его данные
+          if (editIdParam) {
+            const numEditId = Number(editIdParam);
+            const foundLot = lotsData.find((l) => l.id === numEditId);
+            if (foundLot) {
+              loadLotIntoForm(foundLot);
+            } else {
+              getLot(numEditId)
+                .then(loadLotIntoForm)
+                .catch(() => {});
+            }
+          } else if (!selectedItemId && itemsData.length > 0) {
+            setSelectedItemId(itemsData[0].id);
+            if (itemsData[0].metadata?.title) {
+              setTitle(itemsData[0].metadata.title as string);
             }
           }
         })
         .catch(() => {});
     }
-  }, [authLoading, isAuthenticated, navigate, selectedItemId]);
+  }, [authLoading, isAuthenticated, navigate, editIdParam]);
+
+  // Неначавшиеся или недоделанные лоты (черновики, на модерации, одобренные)
+  const unstartedLots = myLots.filter(
+    (l) => l.status === 'draft' || l.status === 'pending_review' || l.status === 'approved'
+  );
+
+  const loadLotIntoForm = (lot: Lot) => {
+    setEditingLotId(lot.id);
+    setEditingLotStatus(lot.status);
+    setSelectedItemId(lot.item_id);
+    setTitle(lot.title || '');
+    setShortText(lot.description?.short_text || '');
+    setText(lot.description?.text || '');
+    setStartAmount(lot.start_amount || 5000);
+    setMinStep(lot.min_step || 250);
+    setIsDraft(lot.status === 'draft');
+    setAutoActivate(lot.description?.auto_activate ?? true);
+    if (lot.started_at) {
+      setStartDateStr(toLocalISOString(new Date(lot.started_at)));
+    }
+    if (lot.ends_at) {
+      setEndDateStr(toLocalISOString(new Date(lot.ends_at)));
+    }
+  };
+
+  const resetToCreateNew = () => {
+    setEditingLotId(null);
+    setEditingLotStatus(null);
+    setSearchParams({});
+    setTitle('');
+    setShortText('');
+    setText('');
+    setStartAmount(5000);
+    setMinStep(250);
+    setIsDraft(false);
+    setAutoActivate(true);
+    setStartDateStr(toLocalISOString(getDefaultStartDate()));
+    setEndDateStr(toLocalISOString(calculateEndDate(getDefaultStartDate(), 'day')));
+    if (items.length > 0) {
+      setSelectedItemId(items[0].id);
+      if (items[0].metadata?.title) {
+        setTitle(items[0].metadata.title as string);
+      }
+    }
+  };
 
   // При смене даты старта пересчитываем дату конца согласно выбранному радио
   const handleStartDateChange = (newStartStr: string) => {
@@ -150,14 +241,14 @@ export default function CreateLotPage() {
       errors.minStep = 'Минимальный шаг ставки должен быть не менее 50 Coins';
     }
 
-    // Проверка даты начала: нельзя раньше чем через час от текущего времени
+    // Проверка даты начала: нельзя раньше чем через 1 час от текущего времени (только для модерации)
     const now = Date.now();
     const startTimestamp = new Date(startDateStr).getTime();
     const endTimestamp = new Date(endDateStr).getTime();
 
     if (isNaN(startTimestamp)) {
       errors.startDate = 'Укажите корректную дату и время старта';
-    } else if (startTimestamp < now + 59 * 60 * 1000) {
+    } else if (!isDraft && startTimestamp < now + 59 * 60 * 1000) {
       errors.startDate = 'Нельзя ставить начало лота раньше чем через 1 час от текущего времени';
     }
 
@@ -184,7 +275,7 @@ export default function CreateLotPage() {
         (new Date(endDateStr).getTime() - new Date(startDateStr).getTime()) / 60000
       );
 
-      const created = await createLot({
+      const payload = {
         item_id: selectedItemId!,
         title: title.trim(),
         category,
@@ -195,8 +286,19 @@ export default function CreateLotPage() {
         duration_minutes: durationMin,
         started_at: startIso,
         ends_at: endIso,
-      });
-      navigate(`/lot/${created.id}`);
+        status: (isDraft ? 'draft' : 'pending_review') as 'draft' | 'pending_review',
+        auto_activate: autoActivate,
+      };
+
+      if (editingLotId) {
+        const updated = await updateLot(editingLotId, payload);
+        cacheLot(updated);
+        navigate(`/lot/${updated.id}`);
+      } else {
+        const created = await createLot(payload);
+        cacheLot(created);
+        navigate(`/lot/${created.id}`);
+      }
     } catch (err) {
       setError(err);
     } finally {
@@ -204,9 +306,25 @@ export default function CreateLotPage() {
     }
   };
 
-  // Предпросмотр карточки лота: не кликается и не имеет таймера (interactive={false})
+  const handleActivateEditingLot = async () => {
+    if (!editingLotId) return;
+    setActivating(true);
+    setError(null);
+    setActivateSuccess(null);
+    try {
+      await activateLot(editingLotId);
+      setActivateSuccess('Лот успешно активирован! Переход на страницу открытых торгов...');
+      setTimeout(() => navigate(`/lot/${editingLotId}`), 1200);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  // Предпросмотр карточки лота
   const previewLot: Lot = {
-    id: 99999,
+    id: editingLotId || 99999,
     seller_id: user?.id || 'me',
     seller: {
       id: user?.id || 'me',
@@ -215,13 +333,14 @@ export default function CreateLotPage() {
       rating: 5.0,
     },
     item_id: selectedItemId || 1,
-    status: 'active',
+    status: isDraft ? 'draft' : 'active',
     category,
     title: title || 'Название лота',
     description: {
       text: text || 'Полное описание лота...',
       short_text: shortText || 'Краткое описание для карточки',
       media: [{ id: 'm1', type: 'image', order: 1 }],
+      auto_activate: autoActivate,
     },
     start_amount: startAmount,
     current_bid: startAmount,
@@ -237,7 +356,7 @@ export default function CreateLotPage() {
 
   return (
     <div className="space-y-6 pb-12">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between">
         <Link
           to="/lots"
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-teal-700 transition-colors"
@@ -245,27 +364,130 @@ export default function CreateLotPage() {
           <ArrowLeft className="w-4 h-4" />
           <span>Назад в каталог</span>
         </Link>
+
+        {editingLotId && (
+          <button
+            type="button"
+            onClick={resetToCreateNew}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-teal-700 transition-colors cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Создать новый вместо редактирования</span>
+          </button>
+        )}
       </div>
 
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
-          Выставить лот на аукцион
-        </h1>
-        <p className="text-xs sm:text-sm text-slate-500">
-          Заполните параметры лота. Предпросмотр обновляется в реальном времени.
-        </p>
+      {/* Заголовок и селектор неначавшихся лотов */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+            {editingLotId ? `Редактировать лот #${editingLotId}` : 'Выставить лот на аукцион'}
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500">
+            {editingLotId
+              ? 'Измените параметры черновика или лота на модерации'
+              : 'Заполните параметры лота. Предпросмотр обновляется в реальном времени.'}
+          </p>
+        </div>
+
+        {/* Выбор из своих недоделанных / неначавшихся лотов */}
+        {unstartedLots.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-500 hidden md:inline">
+              Выбрать лот:
+            </span>
+            <select
+              value={editingLotId || '__new__'}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === '__new__') {
+                  resetToCreateNew();
+                } else {
+                  const targetLot = unstartedLots.find((l) => l.id === Number(val));
+                  if (targetLot) loadLotIntoForm(targetLot);
+                }
+              }}
+              className="px-3 py-1.5 text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl focus:outline-hidden focus:ring-1 focus:ring-teal-500 font-medium cursor-pointer"
+            >
+              <option value="__new__">+ Создать новый лот</option>
+              <optgroup label="Неначавшиеся лоты (черновики и на проверке)">
+                {unstartedLots.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    #{l.id}: {l.title} ({l.status})
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+          </div>
+        )}
       </div>
+
+      {/* Баннер редактирования выбранного лота */}
+      {editingLotId && (
+        <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-amber-500 text-white rounded-xl">
+              <Edit3 className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-amber-950">
+                  Режим редактирования лота #{editingLotId}
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-200/80 text-amber-900 uppercase">
+                  {editingLotStatus}
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-800 mt-0.5">
+                Вы можете обновить текст, предмет, стартовую цену, шаг ставки и расписание.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {editingLotStatus === 'approved' && (
+              <button
+                type="button"
+                onClick={handleActivateEditingLot}
+                disabled={activating}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {activating ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                )}
+                <span>Активировать торги сейчас</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={resetToCreateNew}
+              className="text-xs text-amber-900 hover:underline font-semibold"
+            >
+              Сбросить
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activateSuccess && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 text-xs font-semibold flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{activateSuccess}</span>
+        </div>
+      )}
 
       {error ? <ErrorAlert error={error} onDismiss={() => setError(null)} /> : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Форма создания */}
+        {/* Форма создания / редактирования */}
         <form
           onSubmit={handleSubmit}
           noValidate
           className="lg:col-span-7 bg-white rounded-2xl border border-slate-200/80 p-5 sm:p-6 shadow-xs space-y-4"
         >
-          {/* Выбор предмета: ВСЕГДА select, последний пункт — добавление предмета */}
+          {/* Выбор предмета: select, последний пункт — добавление предмета */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-bold text-slate-700">
@@ -348,20 +570,25 @@ export default function CreateLotPage() {
             ) : null}
           </div>
 
-          {/* Категория (6 категорий строго из itemDomain) */}
+          {/* Категория: определяется автоматически по типу предмета */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">Категория</label>
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-teal-500/20"
-            >
-              {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-bold text-slate-700">Категория</label>
+              <span className="text-[11px] text-slate-400">
+                Определяется автоматически по типу предмета
+              </span>
+            </div>
+            <input
+              type="text"
+              readOnly
+              disabled
+              value={
+                selectedItem
+                  ? `${category} (${selectedItem.type})`
+                  : '— Выберите предмет выше —'
+              }
+              className="w-full px-3.5 py-2.5 text-sm bg-slate-100 text-slate-600 border border-slate-200 rounded-xl cursor-not-allowed select-none font-medium"
+            />
           </div>
 
           {/* Краткое описание */}
@@ -449,164 +676,182 @@ export default function CreateLotPage() {
             </div>
           </div>
 
-          {/* Расписание аукциона: Дата старта + Радио выбор длительности + Дата окончания */}
-          <div className="pt-2 border-t border-slate-100 space-y-4">
-            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+          {/* Дата начала торгов */}
+          <div className="pt-2">
+            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5 text-teal-600" />
-              <span>Время проведения аукциона</span>
-            </h3>
+              <span>Дата и время старта аукциона</span>
+            </label>
+            <input
+              type="datetime-local"
+              value={startDateStr}
+              onChange={(e) => handleStartDateChange(e.target.value)}
+              className={`w-full px-3.5 py-2.5 text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 ${
+                fieldErrors.startDate
+                  ? 'border-rose-400 bg-rose-50/20 focus:ring-rose-400/20'
+                  : 'border-slate-200 focus:ring-teal-500/20'
+              }`}
+            />
+            {fieldErrors.startDate ? (
+              <p className="mt-1 text-xs text-rose-600 font-medium">{fieldErrors.startDate}</p>
+            ) : null}
+          </div>
 
-            {/* Выбор даты и времени старта */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-bold text-slate-700">
-                  Дата и время начала торгов
-                </label>
-                <span className="text-[11px] text-slate-400">минимум через 1 час</span>
-              </div>
-              <input
-                type="datetime-local"
-                value={startDateStr}
-                onChange={(e) => handleStartDateChange(e.target.value)}
-                className={`w-full px-3.5 py-2.5 text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 font-medium ${
-                  fieldErrors.startDate
-                    ? 'border-rose-400 bg-rose-50/20 focus:ring-rose-400/20'
-                    : 'border-slate-200 focus:ring-teal-500/20'
-                }`}
-              />
-              {fieldErrors.startDate ? (
-                <p className="mt-1 text-xs text-rose-600 font-medium flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" />
-                  {fieldErrors.startDate}
-                </p>
-              ) : null}
-            </div>
-
-            {/* Радио-переключатели быстрой длительности (Час, День, Неделя) */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                Длительность торгов (быстрый выбор)
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                <label
-                  className={`flex items-center justify-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all ${
-                    quickDuration === 'hour'
-                      ? 'border-teal-600 bg-teal-50/70 text-teal-900 ring-2 ring-teal-600/20'
-                      : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+          {/* Быстрый выбор длительности */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-teal-600" />
+              <span>Длительность торгов</span>
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'hour', label: '1 час' },
+                { id: 'day', label: '24 часа (1 день)' },
+                { id: 'week', label: '7 дней (неделя)' },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => handleDurationRadioChange(opt.id as QuickDuration)}
+                  className={`px-3 py-2 text-xs font-semibold rounded-xl border transition-colors cursor-pointer text-center ${
+                    quickDuration === opt.id
+                      ? 'border-teal-600 bg-teal-50 text-teal-800 font-bold'
+                      : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
                   }`}
                 >
-                  <input
-                    type="radio"
-                    name="quickDuration"
-                    value="hour"
-                    checked={quickDuration === 'hour'}
-                    onChange={() => handleDurationRadioChange('hour')}
-                    className="sr-only"
-                  />
-                  <span>1 час</span>
-                </label>
-
-                <label
-                  className={`flex items-center justify-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all ${
-                    quickDuration === 'day'
-                      ? 'border-teal-600 bg-teal-50/70 text-teal-900 ring-2 ring-teal-600/20'
-                      : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="quickDuration"
-                    value="day"
-                    checked={quickDuration === 'day'}
-                    onChange={() => handleDurationRadioChange('day')}
-                    className="sr-only"
-                  />
-                  <span>1 день (24 ч)</span>
-                </label>
-
-                <label
-                  className={`flex items-center justify-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all ${
-                    quickDuration === 'week'
-                      ? 'border-teal-600 bg-teal-50/70 text-teal-900 ring-2 ring-teal-600/20'
-                      : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="quickDuration"
-                    value="week"
-                    checked={quickDuration === 'week'}
-                    onChange={() => handleDurationRadioChange('week')}
-                    className="sr-only"
-                  />
-                  <span>1 неделя</span>
-                </label>
-              </div>
-            </div>
-
-            {/* Выбор даты и времени конца */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-bold text-slate-700">
-                  Дата и время окончания торгов
-                </label>
-                <span className="text-[11px] text-slate-400">автоматически или вручную</span>
-              </div>
-              <input
-                type="datetime-local"
-                value={endDateStr}
-                onChange={(e) => {
-                  setEndDateStr(e.target.value);
-                  if (fieldErrors.endDate) {
-                    setFieldErrors((prev) => ({ ...prev, endDate: '' }));
-                  }
-                }}
-                className={`w-full px-3.5 py-2.5 text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 font-medium ${
-                  fieldErrors.endDate
-                    ? 'border-rose-400 bg-rose-50/20 focus:ring-rose-400/20'
-                    : 'border-slate-200 focus:ring-teal-500/20'
-                }`}
-              />
-              {fieldErrors.endDate ? (
-                <p className="mt-1 text-xs text-rose-600 font-medium flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" />
-                  {fieldErrors.endDate}
-                </p>
-              ) : null}
+                  {opt.label}
+                </button>
+              ))}
             </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={submitting || !title.trim() || !selectedItemId}
-            className="w-full py-3 bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm rounded-xl shadow-md transition-colors flex items-center justify-center gap-2 disabled:opacity-50 mt-4 cursor-pointer"
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Запуск аукциона...</span>
-              </>
-            ) : (
-              <>
-                <Gavel className="w-4 h-4" />
-                <span>Запустить аукцион</span>
-              </>
-            )}
-          </button>
+          {/* Дата окончания торгов */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              Дата и время окончания
+            </label>
+            <input
+              type="datetime-local"
+              value={endDateStr}
+              onChange={(e) => {
+                setEndDateStr(e.target.value);
+                if (fieldErrors.endDate) {
+                  setFieldErrors((prev) => ({ ...prev, endDate: '' }));
+                }
+              }}
+              className={`w-full px-3.5 py-2.5 text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 ${
+                fieldErrors.endDate
+                  ? 'border-rose-400 bg-rose-50/20 focus:ring-rose-400/20'
+                  : 'border-slate-200 focus:ring-teal-500/20'
+              }`}
+            />
+            {fieldErrors.endDate ? (
+              <p className="mt-1 text-xs text-rose-600 font-medium">{fieldErrors.endDate}</p>
+            ) : null}
+          </div>
+
+          {/* Настройки: Галочка Draft и Галочка Авто-запуска */}
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3 pt-3">
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={isDraft}
+                onChange={(e) => setIsDraft(e.target.checked)}
+                className="mt-0.5 w-4 h-4 text-teal-600 rounded border-slate-300 focus:ring-teal-500 cursor-pointer"
+              />
+              <div>
+                <span className="text-xs font-bold text-slate-800">
+                  Сохранить как черновик (Draft)
+                </span>
+                <p className="text-[11px] text-slate-500">
+                  {isDraft
+                    ? 'Лот останется в черновиках. Вы сможете доработать и отправить его позже.'
+                    : 'Лот сразу поступит на модерацию (Pending Review) для проверки администратором.'}
+                </p>
+              </div>
+            </label>
+
+            <div className="border-t border-slate-200/80 pt-3">
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoActivate}
+                  onChange={(e) => setAutoActivate(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 text-teal-600 rounded border-slate-300 focus:ring-teal-500 cursor-pointer"
+                />
+                <div>
+                  <span className="text-xs font-bold text-slate-800">
+                    Автоматический запуск торгов (auto_activate)
+                  </span>
+                  <p className="text-[11px] text-slate-500">
+                    {autoActivate
+                      ? 'Торги начнутся автоматически после одобрения лота в запланированное время старта.'
+                      : 'После одобрения лот перейдёт в статус «Approved», и вы сможете нажать кнопку «Активировать» вручную.'}
+                  </p>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Кнопка отправки */}
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full py-3 bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white font-bold text-sm rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Сохранение лота...</span>
+                </>
+              ) : (
+                <>
+                  <Gavel className="w-4 h-4" />
+                  <span>
+                    {editingLotId
+                      ? `Сохранить изменения в лоте #${editingLotId}`
+                      : isDraft
+                      ? 'Сохранить как черновик'
+                      : 'Отправить лот на модерацию'}
+                  </span>
+                </>
+              )}
+            </button>
+          </div>
         </form>
 
-        {/* Неинтерактивный предпросмотр (без таймера, не кликается) */}
-        <div className="lg:col-span-5 space-y-3 lg:sticky lg:top-20">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 uppercase tracking-wider">
-            <Eye className="w-3.5 h-3.5" />
-            <span>Предпросмотр карточки в каталоге</span>
+        {/* Интерактивный предпросмотр карточки лота */}
+        <div className="lg:col-span-5 space-y-3 sticky top-20">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <Eye className="w-3.5 h-3.5" />
+              <span>Предпросмотр карточки</span>
+            </h3>
+            <span className="text-[11px] text-slate-400">
+              {isDraft ? 'Статус: Черновик' : 'Статус: Модерация'}
+            </span>
           </div>
 
-          <LotCard lot={previewLot} interactive={false} />
+          <div className="pointer-events-none">
+            <LotCard lot={previewLot} interactive={false} />
+          </div>
 
-          <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-            Так карточка будет выглядеть в общем каталоге. Во время предпросмотра переход по клику и таймер отключены.
-          </p>
+          <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl text-[11px] text-slate-500 space-y-1">
+            <div className="font-semibold text-slate-700">Информация о публикации:</div>
+            <div>
+              • Режим авто-запуска:{' '}
+              <strong className={autoActivate ? 'text-teal-700' : 'text-slate-700'}>
+                {autoActivate ? 'Включён (автоматически)' : 'Выключен (ручной старт)'}
+              </strong>
+            </div>
+            <div>
+              • Статус сохранения:{' '}
+              <strong className={isDraft ? 'text-amber-700' : 'text-blue-700'}>
+                {isDraft ? 'Черновик (Draft)' : 'На проверку (Pending Review)'}
+              </strong>
+            </div>
+          </div>
         </div>
       </div>
     </div>

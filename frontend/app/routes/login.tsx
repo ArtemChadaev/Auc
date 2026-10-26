@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { LogIn, Loader2, Sparkles, UserCheck } from 'lucide-react';
+import { LogIn, Loader2 } from 'lucide-react';
 import { useAuth } from '~/hooks/useAuth';
 import { ErrorAlert } from '~/components/feedback/ErrorAlert';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('ivan@example.com');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<unknown | null>(null);
 
@@ -34,20 +34,6 @@ export default function LoginPage() {
     setError(null);
     try {
       await login(email.trim(), password);
-      navigate('/lots');
-    } catch (err) {
-      setError(err);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const quickLogin = async (demoEmail: string) => {
-    setEmail(demoEmail);
-    setSubmitting(true);
-    setError(null);
-    try {
-      await login(demoEmail, 'password');
       navigate('/lots');
     } catch (err) {
       setError(err);
@@ -131,45 +117,12 @@ export default function LoginPage() {
             )}
           </button>
         </form>
-
-        {/* Быстрый вход под тестовыми аккаунтами */}
-        <div className="pt-4 border-t border-slate-100 space-y-2.5">
-          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block text-center">
-            Быстрый вход для тестирования
-          </span>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              onClick={() => quickLogin('ivan@example.com')}
-              className="p-2 text-center rounded-xl bg-slate-50 hover:bg-teal-50 hover:text-teal-900 border border-slate-200/80 transition-colors"
-            >
-              <span className="block font-bold text-xs truncate">Иван</span>
-              <span className="text-[10px] text-slate-500">45k 🪙</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => quickLogin('alice@example.com')}
-              className="p-2 text-center rounded-xl bg-slate-50 hover:bg-teal-50 hover:text-teal-900 border border-slate-200/80 transition-colors"
-            >
-              <span className="block font-bold text-xs truncate">Алиса</span>
-              <span className="text-[10px] text-slate-500">120k 🪙</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => quickLogin('bob@example.com')}
-              className="p-2 text-center rounded-xl bg-slate-50 hover:bg-teal-50 hover:text-teal-900 border border-slate-200/80 transition-colors"
-            >
-              <span className="block font-bold text-xs truncate">Боб</span>
-              <span className="text-[10px] text-slate-500">85k 🪙</span>
-            </button>
-          </div>
-        </div>
       </div>
 
       <p className="text-center text-xs text-slate-500">
         Нет аккаунта?{' '}
-        <Link to="/register" className="font-semibold text-teal-600 hover:underline">
-          Зарегистрироваться за 3 шага
+        <Link to="/register" className="text-teal-600 font-semibold hover:underline">
+          Зарегистрироваться
         </Link>
       </p>
     </div>

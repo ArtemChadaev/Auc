@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router';
 import {
   Check,
@@ -13,8 +13,37 @@ import {
   CloudUpload,
 } from 'lucide-react';
 import { useAuth } from '~/hooks/useAuth';
-import { PRESET_AVATARS, SEED_DOCUMENTS } from '~/api/mocks/seed';
+import { listDocuments, recordConsent } from '~/api/docs';
+import { uploadAvatar } from '~/api/auth';
+import type { Document } from '~/api/types';
 import { ErrorAlert } from '~/components/feedback/ErrorAlert';
+
+export const PRESET_AVATARS = [
+  { id: 'avatar-1', name: 'Лиса-кодер', color: 'bg-orange-500' },
+  { id: 'avatar-2', name: 'Кот-моделлер', color: 'bg-emerald-500' },
+  { id: 'avatar-3', name: 'Медведь-архитектор', color: 'bg-blue-500' },
+  { id: 'avatar-4', name: 'Сова-дизайнер', color: 'bg-purple-500' },
+  { id: 'avatar-5', name: 'Волк-хакер', color: 'bg-slate-700' },
+];
+
+const DEFAULT_DOCUMENTS: Document[] = [
+  {
+    id: 1,
+    name: 'terms-of-service',
+    version: '1.0',
+    is_major: true,
+    published_at: new Date().toISOString(),
+    text: `# Пользовательское соглашение\n\n1. Предмет соглашения\nНастоящая платформа предназначена для аукциона цифровых файлов и виртуальных предметов.\n\n2. Расчеты\nВсе расчеты производятся в виртуальных Coins.\n\n3. Правила ставок и Hold\nПри каждой ставке сумма замораживается на счёте покупателя (Hold).`,
+  },
+  {
+    id: 2,
+    name: 'privacy-policy',
+    version: '1.0',
+    is_major: true,
+    published_at: new Date().toISOString(),
+    text: `# Политика конфиденциальности\n\n1. Обработка данных\nПлатформа обрабатывает минимально необходимые данные для аутентификации.\n\n2. Безопасность\nПароли хранятся в виде криптографических хешей.`,
+  },
+];
 
 export default function RegisterPage() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -29,10 +58,12 @@ export default function RegisterPage() {
   const [termsAgreed, setTermsAgreed] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState(false);
   const [activeDocModal, setActiveDocModal] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<Document[]>(DEFAULT_DOCUMENTS);
 
   // Шаг 3: Аватар (пресет или кастомный)
   const [selectedAvatar, setSelectedAvatar] = useState('avatar-1');
   const [customAvatarUrl, setCustomAvatarUrl] = useState<string | null>(null);
+  const [customAvatarFile, setCustomAvatarFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Модалка степени загрузки данных на сервер
@@ -48,6 +79,16 @@ export default function RegisterPage() {
 
   // Валидация шага 1
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    listDocuments()
+      .then((docs) => {
+        if (Array.isArray(docs) && docs.length > 0) {
+          setDocuments(docs);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Валидация шага 1
   const handleNextStep1 = (e: React.FormEvent) => {
@@ -112,6 +153,7 @@ export default function RegisterPage() {
       return;
     }
 
+    setCustomAvatarFile(file);
     const reader = new FileReader();
     reader.onload = (event) => {
       if (typeof event.target?.result === 'string') {
@@ -122,35 +164,41 @@ export default function RegisterPage() {
     reader.readAsDataURL(file);
   };
 
-  // Финальная отправка с пошаговой симуляцией загрузки на сервер
+  // Финальная отправка с пошаговой синхронизацией с сервером
   const handleFinalSubmit = async () => {
     setShowUploadModal(true);
-    setUploadProgress(10);
-    setUploadStatusText('Валидация регистрационных данных...');
+    setUploadProgress(15);
+    setUploadStatusText('Создание учетной записи на сервере...');
 
     try {
-      await new Promise((r) => setTimeout(r, 400));
-      setUploadProgress(35);
-      setUploadStatusText(
-        customAvatarUrl
-          ? 'Кадрирование и обработка квадратной аватарки...'
-          : 'Связывание выбранного профильного аватара...'
-      );
-
-      await new Promise((r) => setTimeout(r, 500));
-      setUploadProgress(65);
-      setUploadStatusText(
-        customAvatarUrl
-          ? 'Загрузка аватара в S3 хранилище (presigned URL)...'
-          : 'Создание пользователя в базе данных...'
-      );
-
-      await new Promise((r) => setTimeout(r, 600));
-      setUploadProgress(90);
-      setUploadStatusText('Начисление приветственного бонуса 10 000 Coins...');
-
-      // Реальная регистрация в мок-БД
+      // 1. Регистрация пользователя POST /api/auth/register
       await register(name.trim(), email.trim(), selectedAvatar, password);
+
+      setUploadProgress(45);
+      setUploadStatusText('Фиксация согласий с документами...');
+
+      // 2. Фиксация согласий POST /api/document/consents
+      const termsDoc = documents.find((d) => d.name.includes('terms') || d.id === 1);
+      const privacyDoc = documents.find((d) => d.name.includes('privacy') || d.id === 2);
+
+      if (termsDoc?.id) {
+        await recordConsent(termsDoc.id).catch(() => {});
+      }
+      if (privacyDoc?.id) {
+        await recordConsent(privacyDoc.id).catch(() => {});
+      }
+
+      setUploadProgress(70);
+
+      // 3. Загрузка аватара при наличии (PUT /api/user/me/avatar)
+      if (customAvatarFile) {
+        setUploadStatusText('Загрузка аватара в S3 хранилище...');
+        try {
+          await uploadAvatar(customAvatarFile);
+        } catch {
+          // Игнорируем ошибку аватара, регистрация уже прошла
+        }
+      }
 
       setUploadProgress(100);
       setUploadStatusText('Регистрация успешно завершена!');
@@ -170,7 +218,9 @@ export default function RegisterPage() {
     }
   };
 
-  const currentDoc = SEED_DOCUMENTS.find((d) => d.name === activeDocModal);
+  const currentDoc = documents.find(
+    (d) => d.name === activeDocModal || d.name.includes(activeDocModal || '')
+  );
 
   return (
     <div className="max-w-md mx-auto py-6 sm:py-10 space-y-5">
@@ -226,7 +276,7 @@ export default function RegisterPage() {
                   if (fieldErrors.name) setFieldErrors((prev) => ({ ...prev, name: '' }));
                 }}
                 placeholder="Иван Петров"
-                className={`w-full px-3.5 py-2 text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 ${
+                className={`w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 ${
                   fieldErrors.name
                     ? 'border-rose-400 bg-rose-50/20 focus:ring-rose-400/20'
                     : 'border-slate-200 focus:ring-teal-500/20 focus:border-teal-500'
@@ -238,7 +288,9 @@ export default function RegisterPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Email</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Электронная почта
+              </label>
               <input
                 type="email"
                 value={email}
@@ -247,7 +299,7 @@ export default function RegisterPage() {
                   if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: '' }));
                 }}
                 placeholder="ivan@example.com"
-                className={`w-full px-3.5 py-2 text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 ${
+                className={`w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 ${
                   fieldErrors.email
                     ? 'border-rose-400 bg-rose-50/20 focus:ring-rose-400/20'
                     : 'border-slate-200 focus:ring-teal-500/20 focus:border-teal-500'
@@ -268,7 +320,7 @@ export default function RegisterPage() {
                   if (fieldErrors.password) setFieldErrors((prev) => ({ ...prev, password: '' }));
                 }}
                 placeholder="Минимум 6 символов"
-                className={`w-full px-3.5 py-2 text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 ${
+                className={`w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 ${
                   fieldErrors.password
                     ? 'border-rose-400 bg-rose-50/20 focus:ring-rose-400/20'
                     : 'border-slate-200 focus:ring-teal-500/20 focus:border-teal-500'
@@ -292,7 +344,7 @@ export default function RegisterPage() {
                     setFieldErrors((prev) => ({ ...prev, passwordConfirm: '' }));
                 }}
                 placeholder="Повторите пароль"
-                className={`w-full px-3.5 py-2 text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 ${
+                className={`w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-50 border rounded-xl focus:outline-hidden focus:ring-2 ${
                   fieldErrors.passwordConfirm
                     ? 'border-rose-400 bg-rose-50/20 focus:ring-rose-400/20'
                     : 'border-slate-200 focus:ring-teal-500/20 focus:border-teal-500'
@@ -414,7 +466,6 @@ export default function RegisterPage() {
 
               {customAvatarUrl ? (
                 <div className="flex items-center gap-3.5">
-                  {/* Квадратное кадрированное превью */}
                   <div className="relative w-16 h-16 rounded-xl overflow-hidden aspect-square border-2 border-teal-500 shadow-xs shrink-0 bg-slate-200">
                     <img
                       src={customAvatarUrl}
@@ -440,6 +491,7 @@ export default function RegisterPage() {
                         type="button"
                         onClick={() => {
                           setCustomAvatarUrl(null);
+                          setCustomAvatarFile(null);
                           setSelectedAvatar('avatar-1');
                         }}
                         className="text-xs text-rose-500 hover:underline cursor-pointer"
@@ -463,11 +515,12 @@ export default function RegisterPage() {
               )}
             </div>
 
-            {/* 5 стандартных мок-аватарок */}
+            {/* 5 стандартных аватарок */}
             <div className="space-y-1.5">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
                 Или выберите стандартный аватар:
               </span>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {PRESET_AVATARS.map((avatar) => {
                   const isSelected = selectedAvatar === avatar.id && !customAvatarUrl;
@@ -478,6 +531,7 @@ export default function RegisterPage() {
                       onClick={() => {
                         setSelectedAvatar(avatar.id);
                         setCustomAvatarUrl(null);
+                        setCustomAvatarFile(null);
                       }}
                       className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
                         isSelected
@@ -501,10 +555,6 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            <div className="p-3 bg-amber-50 border border-amber-200/70 rounded-xl text-amber-900 text-xs">
-              🎁 При регистрации вам автоматически будет начислено <strong>10 000 Coins</strong> для первых ставок!
-            </div>
-
             <div className="flex items-center gap-3 pt-2">
               <button
                 type="button"
@@ -526,7 +576,7 @@ export default function RegisterPage() {
         )}
       </div>
 
-      {/* Специальная модалка отправки данных на сервер с индикатором прогресса */}
+      {/* Модалка отправки данных на сервер с индикатором прогресса */}
       {showUploadModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-sm shadow-2xl text-center space-y-4">
@@ -545,7 +595,6 @@ export default function RegisterPage() {
               <p className="text-xs text-slate-500 mt-1">{uploadStatusText}</p>
             </div>
 
-            {/* Прогресс-бар с процентами */}
             <div className="space-y-1.5">
               <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
                 <div
@@ -574,7 +623,7 @@ export default function RegisterPage() {
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4 text-teal-600" />
                 <h3 className="font-bold text-sm text-slate-900">
-                  {currentDoc.name === 'terms'
+                  {currentDoc.name.includes('terms')
                     ? 'Пользовательское соглашение'
                     : 'Политика конфиденциальности'}
                 </h3>
@@ -602,13 +651,6 @@ export default function RegisterPage() {
           </div>
         </div>
       )}
-
-      <p className="text-center text-xs text-slate-500">
-        Уже есть аккаунт?{' '}
-        <Link to="/login" className="font-semibold text-teal-600 hover:underline">
-          Войти
-        </Link>
-      </p>
     </div>
   );
 }

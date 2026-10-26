@@ -288,6 +288,18 @@ Accept: application/json
     });
 %}
 
+### 5.2 Подключение к Server-Sent Events (SSE) потоку ставок лота (GET /api/bid/{id}/stream)
+GET {{host}}/api/bid/{{active_flow_lot_id}}/stream
+Authorization: Bearer {{bidder_token}}
+Accept: text/event-stream
+
+> {%
+    client.test("SSE stream connected successfully (200 OK)", () => {
+        client.assert(response.status === 200, "Expected status 200 OK for SSE stream, got: " + response.status);
+        client.assert(response.contentType.mimeType === "text/event-stream", "Expected Content-Type text/event-stream, got: " + response.contentType.mimeType);
+    });
+%}
+
 ### 6.1 Отмена черновика лота продавцом (DELETE /api/lot/{id})
 DELETE {{host}}/api/lot/{{draft_lot_id}}
 Authorization: Bearer {{seller_token}}

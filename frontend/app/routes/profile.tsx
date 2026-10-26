@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useAuth } from '~/hooks/useAuth';
 import { listUserItems } from '~/api/items';
-import { listLots } from '~/api/lots';
+import { listLots, getMyLots } from '~/api/lots';
 import { listTransactions } from '~/api/profile';
 import type { Item, Lot, LedgerEntry } from '~/api/types';
 import { useUserStream } from '~/realtime/useUserStream';
@@ -12,6 +12,7 @@ import { MyLots } from '~/components/profile/MyLots';
 import { MyBids } from '~/components/profile/MyBids';
 import { TransactionsTable } from '~/components/profile/TransactionsTable';
 import { ErrorAlert } from '~/components/feedback/ErrorAlert';
+import { getParticipatingLotIds } from '~/lib/participating-lots';
 
 export default function ProfilePage() {
   const { user, isAuthenticated, loading: authLoading, claimDailyCoins, logout } = useAuth();
@@ -29,22 +30,25 @@ export default function ProfilePage() {
     setLoading(true);
     setError(null);
     try {
-      const [itemsData, lotsData, txData] = await Promise.all([
+      const [itemsData, lotsData, txData, myLotsData] = await Promise.all([
         listUserItems(),
         listLots({ limit: 50 }),
         listTransactions(),
+        getMyLots().catch(() => []),
       ]);
 
       setItems(itemsData);
       setTransactions(txData);
 
-      // Лоты продавца
-      const created = lotsData.items.filter((l) => l.seller_id === user.id);
-      setMyLots(created);
+      // Лоты продавца (все статусы, включая draft, pending_review, approved)
+      setMyLots(myLotsData);
 
-      // Лоты, где текущий пользователь сделал хотя бы одну ставку
-      const bidded = lotsData.items.filter((l) => l.seller_id !== user.id);
-      setParticipatingLots(bidded.slice(0, 3));
+      // Лоты, где текущий пользователь участвовал со ставкой (из локальной записи)
+      const participatedIds = getParticipatingLotIds(user.id);
+      const bidded = lotsData.items.filter(
+        (l) => participatedIds.includes(l.id) || l.winner?.id === user.id
+      );
+      setParticipatingLots(bidded);
     } catch (err) {
       setError(err);
     } finally {
@@ -93,8 +97,8 @@ export default function ProfilePage() {
       <BalanceCard
         user={user}
         onClaimDaily={claimDailyCoins}
-        onLogout={() => {
-          logout();
+        onLogout={async () => {
+          await logout();
           navigate('/login');
         }}
       />
@@ -104,11 +108,12 @@ export default function ProfilePage() {
         <MyItems
           items={items}
           onItemAdded={(newItem) => setItems((prev) => [newItem, ...prev])}
+          onItemRemoved={(removedId) => setItems((prev) => prev.filter((it) => it.id !== removedId))}
         />
       </div>
 
       {/* 3. Мои лоты */}
-      <MyLots lots={myLots} />
+      <MyLots lots={myLots} onRefresh={loadProfileData} />
 
       {/* 4. Мои ставки */}
       <MyBids lots={participatingLots} />

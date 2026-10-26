@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import {
   X,
   Download,
+  Gift,
   Gavel,
   Copy,
   Check,
@@ -19,20 +20,27 @@ import {
   Loader2,
   AlertCircle,
 } from 'lucide-react';
-import { getItemDownloadUrl } from '~/api/items';
+import { getItemDownloadUrl, giftItem } from '~/api/items';
 import type { Item, ItemType } from '~/api/types';
 import { formatTime } from '~/lib/date';
 
 interface ItemViewerModalProps {
   item: Item | null;
   onClose: () => void;
+  onGifted?: (itemId: number) => void;
 }
 
-export function ItemViewerModal({ item, onClose }: ItemViewerModalProps) {
+export function ItemViewerModal({ item, onClose, onGifted }: ItemViewerModalProps) {
   const [downloading, setDownloading] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [copiedHash, setCopiedHash] = useState(false);
+  const [showGiftModal, setShowGiftModal] = useState(false);
+  const [giftRecipient, setGiftRecipient] = useState('');
+  const [giftDescription, setGiftDescription] = useState('');
+  const [gifting, setGifting] = useState(false);
+  const [giftSuccess, setGiftSuccess] = useState<string | null>(null);
+  const [giftError, setGiftError] = useState<string | null>(null);
 
   if (!item) return null;
 
@@ -48,6 +56,31 @@ export function ItemViewerModal({ item, onClose }: ItemViewerModalProps) {
     navigator.clipboard.writeText(checksum);
     setCopiedHash(true);
     setTimeout(() => setCopiedHash(false), 2000);
+  };
+
+
+  const handleGiftSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!giftRecipient.trim()) {
+      setGiftError('Укажите UUID нового владельца');
+      return;
+    }
+    setGifting(true);
+    setGiftError(null);
+    setGiftSuccess(null);
+    try {
+      await giftItem(item.id, giftRecipient.trim(), giftDescription.trim());
+      setGiftSuccess('Предмет успешно передан новому владельцу!');
+      setTimeout(() => {
+        setShowGiftModal(false);
+        onClose();
+        onGifted?.(item.id);
+      }, 1200);
+    } catch (err: unknown) {
+      setGiftError(err instanceof Error ? err.message : 'Не удалось передать предмет');
+    } finally {
+      setGifting(false);
+    }
   };
 
   const handleDownload = async () => {
@@ -225,6 +258,9 @@ export function ItemViewerModal({ item, onClose }: ItemViewerModalProps) {
             </div>
           )}
 
+          
+          
+              
           {/* Специфические метаданные по типу файла */}
           <div className="p-3.5 rounded-xl border border-slate-200/80 bg-white space-y-2">
             <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
@@ -352,6 +388,20 @@ export function ItemViewerModal({ item, onClose }: ItemViewerModalProps) {
           </div>
 
           <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+            
+            <button
+              type="button"
+              onClick={() => {
+                setGiftError(null);
+                setGiftSuccess(null);
+                setShowGiftModal(true);
+              }}
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-800 font-semibold text-xs border border-purple-200 rounded-xl shadow-2xs transition-colors cursor-pointer"
+            >
+              <Gift className="w-3.5 h-3.5 text-purple-600" />
+              <span>Подарить</span>
+            </button>
+
             <button
               type="button"
               onClick={handleDownload}
@@ -382,6 +432,115 @@ export function ItemViewerModal({ item, onClose }: ItemViewerModalProps) {
           </div>
         </div>
       </div>
+      {/* Модальное окно дарения 2-го уровня (z-[60] поверх просмоторщика предмета) */}
+      {showGiftModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in"
+          onClick={() => setShowGiftModal(false)}
+        >
+          <div
+            className="bg-white w-full max-w-md rounded-2xl border border-slate-200 shadow-2xl p-5 space-y-4 animate-in zoom-in-95"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                  <Gift className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Подарить предмет</h3>
+                  <p className="text-[11px] text-slate-500">Безвозмездная передача права владения</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGiftModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 flex items-center gap-3">
+              <div className="p-2 bg-white rounded-lg border border-slate-200/60 shrink-0">
+                {getTypeIcon(item.type)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-bold text-slate-900 truncate">
+                  {title}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  Формат: <span className="font-semibold text-slate-700">{fileFormat}</span> • Размер: {fileSize}
+                </div>
+              </div>
+            </div>
+
+            {giftSuccess && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 text-xs font-semibold flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{giftSuccess}</span>
+              </div>
+            )}
+
+            {giftError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-900 text-xs font-semibold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{giftError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleGiftSubmit} className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  UUID получателя <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={giftRecipient}
+                  onChange={(e) => setGiftRecipient(e.target.value)}
+                  placeholder="например: 01a16eb9-6036-71b4-92c7-a192bda68d9c"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 font-mono"
+                  autoFocus
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Получатель может найти и скопировать свой UUID в личном кабинете
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Примечание к подарку (опционально)
+                </label>
+                <input
+                  type="text"
+                  value={giftDescription}
+                  onChange={(e) => setGiftDescription(e.target.value)}
+                  placeholder="Например: Подарок за победу в конкурсе..."
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowGiftModal(false)}
+                  className="px-3.5 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl transition-colors font-medium cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="submit"
+                  disabled={gifting}
+                  className="px-4 py-2 text-xs bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl shadow-xs transition-colors disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {gifting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Gift className="w-3.5 h-3.5" />}
+                  <span>Передать предмет</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

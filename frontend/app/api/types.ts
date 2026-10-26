@@ -134,6 +134,7 @@ export interface LotDescription {
   short_text?: string;
   media: MediaItem[];
   attributes?: Record<string, string>;
+  auto_activate?: boolean;
 }
 
 export interface SellerInfo {
@@ -257,6 +258,8 @@ export interface CreateLotInput {
   duration_minutes: number;
   started_at?: string;
   ends_at?: string;
+  status?: 'draft' | 'pending_review';
+  auto_activate?: boolean;
 }
 
 export interface CreateItemInput {

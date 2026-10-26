@@ -44,6 +44,7 @@ type uploadURLResp struct {
 // @Description Генерирует Presigned PUT URL для прямой загрузки файла в S3
 // @Tags upload
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept json
 // @Produce json
 // @Param input body uploadURLReq true "Параметры загружаемого файла"
@@ -137,6 +138,7 @@ func (h *Handler) getUploadURL(w http.ResponseWriter, r *http.Request) {
 // @Description Отменяет активную загрузку пользователя, удаляет временный файл из S3 и освобождает слот
 // @Tags upload
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Produce json
 // @Success 200 {object} httpx.Response
 // @Failure 401 {object} httpx.Response "Не авторизован"
@@ -179,6 +181,7 @@ type confirmUploadResp struct {
 // @Description Подтверждает успешную загрузку файла в S3 для проверки и старта фонового парсинга. Ключ можно передать в заголовке X-Upload-Key или в теле JSON
 // @Tags upload
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept json
 // @Produce json
 // @Param X-Upload-Key header string false "UUID ключ загрузки"
@@ -262,6 +265,7 @@ func (h *Handler) confirmUpload(w http.ResponseWriter, r *http.Request) {
 // @Description Проверяет текущий статус обработки файла по ключу загрузки
 // @Tags upload
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Produce json
 // @Param key query string true "UUID ключ загрузки"
 // @Success 200 {object} httpx.Response "Файл в процессе обработки (pending, processing)"
@@ -354,6 +358,7 @@ type downloadURLResp struct {
 // @Description Возвращает Presigned GET URL для скачивания файла владельцем (не более 1 раза в день)
 // @Tags item
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Produce json
 // @Param id path int true "ID предмета"
 // @Success 200 {object} httpx.Response{data=downloadURLResp}
@@ -437,6 +442,7 @@ type giftItemReq struct {
 // @Description Передает предмет новому владельцу с сохранением истории передачи
 // @Tags item
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept json
 // @Produce json
 // @Param input body giftItemReq true "Параметры подарка"

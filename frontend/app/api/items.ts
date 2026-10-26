@@ -1,36 +1,24 @@
-import { mockDb } from './mocks/db';
-import { simulateLatency } from './mocks/latency';
 import {
   listUserItemsReal,
   createItemReal,
   getItemReal,
   getItemDownloadUrlReal,
+  giftItemReal,
+  saveUserItemLocally,
 } from './real/items';
 import type { Item, CreateItemInput, DownloadUrlResponse } from './types';
 
-const USE_MOCKS = true;
+const USE_MOCKS = false;
 
 export async function listUserItems(): Promise<Item[]> {
-  if (USE_MOCKS) {
-    await simulateLatency();
-    return mockDb.listUserItems();
-  }
   return listUserItemsReal();
 }
 
 export async function getItem(id: number): Promise<Item> {
-  if (USE_MOCKS) {
-    await simulateLatency(100);
-    return mockDb.getItem(id);
-  }
   return getItemReal(id);
 }
 
 export async function createItem(input: CreateItemInput): Promise<Item> {
-  if (USE_MOCKS) {
-    await simulateLatency();
-    return mockDb.createItem(input);
-  }
   return createItemReal(input);
 }
 
@@ -39,9 +27,19 @@ export async function createItem(input: CreateItemInput): Promise<Item> {
  * Получение Presigned URL на скачивание файла (с проверкой суточного лимита 1 раз в день)
  */
 export async function getItemDownloadUrl(id: number): Promise<DownloadUrlResponse> {
-  if (USE_MOCKS) {
-    await simulateLatency(150);
-    return mockDb.getItemDownloadUrl(id);
-  }
   return getItemDownloadUrlReal(id);
 }
+
+/**
+ * POST /api/item/gift
+ * Передает предмет новому владельцу с сохранением истории передачи
+ */
+export async function giftItem(
+  itemId: number,
+  newOwner: string,
+  description?: string
+): Promise<void> {
+  return giftItemReal(itemId, newOwner, description);
+}
+
+export { saveUserItemLocally };

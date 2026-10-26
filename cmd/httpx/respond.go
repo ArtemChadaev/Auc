@@ -51,12 +51,14 @@ func DecodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		WriteResponse(w, ErrRespInvalidReqBody)
+		return req, fmt.Errorf("respond.DecodeJSON: %w", apperr.NewAppErrorString("unexpected data after JSON", 4))
 	}
 	val := reflect.ValueOf(&req).Elem()
 	if val.Kind() != reflect.Struct {
 		WriteResponse(w, ErrRespInvalidReqBody)
 		return req, fmt.Errorf("respond.DecodeJSON: %w", apperr.NewAppErrorString("not struct", 4))
 	}
+
 	for _, field := range val.Fields() {
 		if !field.CanSet() {
 			continue
@@ -68,6 +70,18 @@ func DecodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 			field.SetString(trimmed)
 		}
 	}
+
+	type checker interface {
+		Check() error
+	}
+
+	if reqCheck, ok := any(&req).(checker); ok {
+		if err := reqCheck.Check(); err != nil {
+			WriteResponse(w, ErrRespInvalidReqBody)
+			return req, fmt.Errorf("respond.DecodeJSON: %w", apperr.NewAppError(err, -4))
+		}
+	}
+
 	return req, nil
 }
 

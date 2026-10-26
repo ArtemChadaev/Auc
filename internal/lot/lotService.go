@@ -188,40 +188,6 @@ func (s *Service) approve(ctx context.Context, id int64) error {
 
  10. Фиксация транзакции:
     COMMIT;
-
-================================================================================
-Пример 3. Ошибка / Откат (Rollback): Текущий лидер пытается перебить сам себя
-Лидер uid='0192e4a1-0002-7000-8000-000000000002' пытается снова поставить на лот 1.
-
- 1. Начало транзакции:
-    BEGIN;
-
- 2. Блокировка лота:
-    SELECT * FROM lots WHERE id = 1 AND status = 'active' FOR UPDATE;
-
- 3. Получение последней ставки:
-    SELECT * FROM bids WHERE lot_id = 1 ORDER BY id desc LIMIT 1;
-    -- Вернуло: user_id = '0192e4a1-0002-7000-8000-000000000002'
-
- 4. В коде срабатывает проверка uid == bid.UserId -> возвращается ErrLider.
-    defer tx.Rollback(ctx) откатывает транзакцию:
-    ROLLBACK;
-
-================================================================================
-АНАЛИЗ SQL:
- 1. getByIdForUpdate:
-    SELECT * FROM lots WHERE id = $1 AND status = $2 FOR UPDATE
-    - Запрос гарантирует выборку только активного лота и его блокировку.
- 2. getLastBid:
-    SELECT * FROM bids WHERE lot_id = $1 ORDER BY id desc LIMIT 1
-    - ORDER BY id desc детерминирован и надежнее ORDER BY created_at desc.
- 3. createBid:
-    INSERT INTO bids (lot_id, user_id, amount) VALUES ($1, $2, $3)
-    - Явное перечисление колонок защищает от ошибок при изменении схемы таблицы.
- 4. changeHold:
-    UPDATE users SET hold = hold + $1 WHERE id = $2 AND deleted_at IS NULL
-    - Взаимные блокировки исключены, так как обе строки пользователей блокируются
-    в строго упорядоченном виде (по возрастанию UUID) через getUserForUpdate перед изменением.
 */
 func (s *Service) bid(ctx context.Context, idLot int64, uid uuid.UUID, amount int) error {
 	// Первоначальная проверка и начало транзакции
@@ -239,6 +205,9 @@ func (s *Service) bid(ctx context.Context, idLot int64, uid uuid.UUID, amount in
 	lot, err := txRepo.getByIdForUpdate(ctx, idLot)
 	if err != nil {
 		return fmt.Errorf("lotService.bid: %w", err)
+	}
+	if lot.SellerID == uid {
+		return fmt.Errorf("lotService.bid: %w", ErrForbidden)
 	}
 
 	bid, err := txRepo.getLastBid(ctx, idLot)

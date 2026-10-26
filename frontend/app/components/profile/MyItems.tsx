@@ -20,9 +20,10 @@ import { ItemViewerModal } from './ItemViewerModal';
 interface MyItemsProps {
   items: Item[];
   onItemAdded: (item: Item) => void;
+  onItemRemoved?: (itemId: number) => void;
 }
 
-export function MyItems({ items, onItemAdded }: MyItemsProps) {
+export function MyItems({ items, onItemAdded, onItemRemoved }: MyItemsProps) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedItemForView, setSelectedItemForView] = useState<Item | null>(null);
 
@@ -191,6 +192,10 @@ export function MyItems({ items, onItemAdded }: MyItemsProps) {
       <ItemViewerModal
         item={selectedItemForView}
         onClose={() => setSelectedItemForView(null)}
+        onGifted={(id) => {
+          onItemRemoved?.(id);
+          setSelectedItemForView(null);
+        }}
       />
     </div>
   );

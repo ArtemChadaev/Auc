@@ -125,3 +125,14 @@ func (r *Repo) setAdmin(ctx context.Context, uid uuid.UUID) error {
 	}
 	return nil
 }
+
+func (r *Repo) changeBalance(ctx context.Context, uid uuid.UUID, changeBalance int) error {
+	res, err := r.db.Exec(ctx, "UPDATE users SET balance = balance + $1 WHERE id = $2 AND deleted_at IS NULL", changeBalance, uid)
+	if err != nil {
+		return fmt.Errorf("userRepo.changeBalance: %w", storage.ErrRepo(err))
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("userRepo.changeBalance: %w", storage.ErrNotFound)
+	}
+	return nil
+}

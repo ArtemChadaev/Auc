@@ -196,7 +196,7 @@ func (r *Repo) getByIdForUpdate(ctx context.Context, id int64) (Lot, error) {
 	row, err := r.db.Query(ctx, `
 		SELECT id, seller_id, item_id, status, winner_id, start_amount, min_step, finish_amount, title, description, created_at, started_at, ends_at, finished_at 
 		FROM lots 
-		WHERE id = $1 AND created_at > now() AND ends_at < now() + interval '1 minute'
+		WHERE id = $1 AND status = 'active'
 		FOR UPDATE`, id)
 	if err != nil {
 		return lot, fmt.Errorf("lotRepo.getByIdForUpdate: %w", storage.ErrRepo(err))

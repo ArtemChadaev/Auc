@@ -3,9 +3,11 @@ import { Link } from 'react-router';
 import { Coins, Loader2, Plus, Sparkles, AlertCircle } from 'lucide-react';
 import type { Lot } from '~/api/types';
 import { placeBid } from '~/api/bids';
+import { activateLot, cancelLot } from '~/api/lots';
 import { useAuth } from '~/hooks/useAuth';
 import { formatCoins } from '~/lib/money';
 import { ErrorAlert } from '~/components/feedback/ErrorAlert';
+import { recordParticipatingLot } from '~/lib/participating-lots';
 
 interface BidFormProps {
   lot: Lot;
@@ -20,6 +22,37 @@ export function BidForm({ lot, onBidSuccess }: BidFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<unknown | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  const [sellerActionLoading, setSellerActionLoading] = useState(false);
+  const [sellerActionError, setSellerActionError] = useState<string | null>(null);
+
+  const handleActivate = async () => {
+    setSellerActionLoading(true);
+    setSellerActionError(null);
+    try {
+      await activateLot(lot.id);
+      setSuccessNotice('Лот успешно активирован!');
+      onBidSuccess();
+    } catch (err: unknown) {
+      setSellerActionError(err instanceof Error ? err.message : 'Не удалось активировать лот');
+    } finally {
+      setSellerActionLoading(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!confirm('Вы уверены, что хотите отменить этот лот?')) return;
+    setSellerActionLoading(true);
+    setSellerActionError(null);
+    try {
+      await cancelLot(lot.id);
+      setSuccessNotice('Лот успешно отменен!');
+      onBidSuccess();
+    } catch (err: unknown) {
+      setSellerActionError(err instanceof Error ? err.message : 'Не удалось отменить лот');
+    } finally {
+      setSellerActionLoading(false);
+    }
+  };
 
   // Обновляем сумму ставки, если текущая ставка выросла
   useEffect(() => {
@@ -42,6 +75,9 @@ export function BidForm({ lot, onBidSuccess }: BidFormProps) {
 
     try {
       await placeBid(lot.id, amount);
+      if (user?.id) {
+        recordParticipatingLot(lot.id, user.id);
+      }
       setSuccessNotice(`Ставка ${formatCoins(amount)} успешно принята!`);
       onBidSuccess();
       setTimeout(() => setSuccessNotice(null), 3000);
@@ -203,7 +239,10 @@ export function BidForm({ lot, onBidSuccess }: BidFormProps) {
                 <span>Отправка ставки...</span>
               </>
             ) : (
-              <span>Поставить {formatCoins(amount)}</span>
+              <>
+                <Coins className="w-4 h-4 text-amber-300" />
+                <span>Сделать ставку {formatCoins(amount)}</span>
+              </>
             )}
           </button>
         </form>

@@ -25,6 +25,7 @@ import (
 // @title Auction API
 // @version 1.0
 // @description REST API документация платформы аукциона Auction.
+// @description Для всех эндпоинтов, требующих авторизации (BearerAuth), поддерживается заголовок Idempotency-Key для защиты от повторной обработки (идемпотентность).
 //
 // @securityDefinitions.apikey BearerAuth
 // @in header
@@ -43,7 +44,7 @@ func main() {
 	defer stop()
 
 	// db
-	pool, err := pgxpool.New(context.Background(), "postgresql://test:password@"+cfg.Cfg.HostDB+":5432/db")
+	pool, err := pgxpool.New(ctx, "postgresql://test:password@"+cfg.Cfg.HostDB+":5432/db")
 	if err != nil {
 		slog.Error("main.db", "error", err)
 		return
@@ -115,11 +116,11 @@ func main() {
 
 	// doc
 	docHandler := documents.NewHandler(documents.NewService(documents.NewRepo(pool)))
-	mux.Handle("/api/document/", http.StripPrefix("/api/documents", docHandler.Routes(authChain)))
+	mux.Handle("/api/document/", http.StripPrefix("/api/document", docHandler.Routes(authChain)))
 
 	// lot
 	lotService := lot.NewService(lot.NewRepo(pool), pool)
-	//lotService.FinishLots()
+	go lotService.FinishLots(ctx)
 	lotHandler := lot.NewHandler(lotService)
 	mux.Handle("/api/lot/", http.StripPrefix("/api/lot", lotHandler.RouterLot(authChain, adminChain)))
 	mux.Handle("/api/bid/", http.StripPrefix("/api/bid", lotHandler.RouterBid(authChain)))

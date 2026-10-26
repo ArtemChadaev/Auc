@@ -93,6 +93,12 @@ const docTemplate = `{
                 "summary": "Выход из системы",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
+                    {
                         "description": "ID сессий для завершения",
                         "name": "input",
                         "in": "body",
@@ -252,6 +258,12 @@ const docTemplate = `{
                 "summary": "Получение сессий пользователя",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
+                    {
                         "description": "Фильтр сессий",
                         "name": "input",
                         "in": "body",
@@ -331,7 +343,13 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Параметры ставки (сумма и ключ идемпотентности)",
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
+                    {
+                        "description": "Параметры ставки",
                         "name": "input",
                         "in": "body",
                         "required": true,
@@ -494,6 +512,14 @@ const docTemplate = `{
                     "document"
                 ],
                 "summary": "Получить список согласий пользователя",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -548,6 +574,12 @@ const docTemplate = `{
                 ],
                 "summary": "Дать согласие с документом",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
                     {
                         "description": "ID документа",
                         "name": "input",
@@ -620,6 +652,12 @@ const docTemplate = `{
                 ],
                 "summary": "Получить согласие по ID документа",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
                     {
                         "type": "integer",
                         "description": "ID документа",
@@ -806,6 +844,12 @@ const docTemplate = `{
                 "summary": "Передать предмет в подарок",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
+                    {
                         "description": "Параметры подарка",
                         "name": "input",
                         "in": "body",
@@ -859,6 +903,12 @@ const docTemplate = `{
                 ],
                 "summary": "Получить URL для скачивания предмета",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
                     {
                         "type": "integer",
                         "description": "ID предмета",
@@ -984,6 +1034,12 @@ const docTemplate = `{
                 "summary": "Создать новый лот",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
+                    {
                         "description": "Параметры нового лота",
                         "name": "input",
                         "in": "body",
@@ -1060,6 +1116,14 @@ const docTemplate = `{
                     "lot"
                 ],
                 "summary": "Получить мои лоты",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1181,6 +1245,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
+                    {
                         "description": "Обновленные параметры лота",
                         "name": "input",
                         "in": "body",
@@ -1262,6 +1332,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
                     }
                 ],
                 "responses": {
@@ -1323,6 +1399,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
                     },
                     {
                         "description": "Опциональные даты начала и окончания торгов",
@@ -1406,6 +1488,14 @@ const docTemplate = `{
                     "upload"
                 ],
                 "summary": "Отменить загрузку файла",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1453,6 +1543,12 @@ const docTemplate = `{
                 ],
                 "summary": "Подтвердить загрузку файла",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
                     {
                         "type": "string",
                         "description": "UUID ключ загрузки",
@@ -1538,6 +1634,12 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
                         "description": "UUID ключ загрузки",
                         "name": "key",
                         "in": "query",
@@ -1621,6 +1723,12 @@ const docTemplate = `{
                 ],
                 "summary": "Получить URL для загрузки файла",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
                     {
                         "description": "Параметры загружаемого файла",
                         "name": "input",
@@ -1710,6 +1818,14 @@ const docTemplate = `{
                     "user"
                 ],
                 "summary": "Получить профиль пользователя",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1757,6 +1873,14 @@ const docTemplate = `{
                     "user"
                 ],
                 "summary": "Удалить профиль пользователя",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1798,6 +1922,12 @@ const docTemplate = `{
                 ],
                 "summary": "Обновить аватар пользователя",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
                     {
                         "type": "file",
                         "description": "Файл изображения аватара (квадратный)",
@@ -1858,6 +1988,63 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/user/me/freeCoin": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Начисляет 1000 бесплатных монет на баланс авторизованного пользователя",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user"
+                ],
+                "summary": "Получить бесплатные монеты",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Баланс успешно пополнен",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/httpx.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/user.User"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Не авторизован",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Внутренняя ошибка сервера",
+                        "schema": {
+                            "$ref": "#/definitions/httpx.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/user/name": {
             "patch": {
                 "security": [
@@ -1877,6 +2064,12 @@ const docTemplate = `{
                 ],
                 "summary": "Обновить имя пользователя",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ключ идемпотентности",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
                     {
                         "description": "Новое имя пользователя",
                         "name": "input",
@@ -2166,9 +2359,6 @@ const docTemplate = `{
             "properties": {
                 "amount": {
                     "type": "integer"
-                },
-                "idempotency_key": {
-                    "type": "string"
                 }
             }
         },
@@ -2372,7 +2562,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "",
 	Schemes:          []string{},
 	Title:            "Auction API",
-	Description:      "REST API документация платформы аукциона Auction.",
+	Description:      "REST API документация платформы аукциона Auction.\nДля всех эндпоинтов, требующих авторизации (BearerAuth), поддерживается заголовок Idempotency-Key для защиты от повторной обработки (идемпотентность).",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

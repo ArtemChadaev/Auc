@@ -165,8 +165,6 @@ definitions:
     properties:
       amount:
         type: integer
-      idempotency_key:
-        type: string
     type: object
   lot.reqNewLot:
     properties:
@@ -291,7 +289,9 @@ definitions:
     type: object
 info:
   contact: {}
-  description: REST API документация платформы аукциона Auction.
+  description: |-
+    REST API документация платформы аукциона Auction.
+    Для всех эндпоинтов, требующих авторизации (BearerAuth), поддерживается заголовок Idempotency-Key для защиты от повторной обработки (идемпотентность).
   title: Auction API
   version: "1.0"
 paths:
@@ -337,6 +337,10 @@ paths:
       - application/json
       description: Завершает указанные refresh-сессии пользователя. Требует авторизации
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: ID сессий для завершения
         in: body
         name: input
@@ -435,6 +439,10 @@ paths:
       description: Возвращает список сессий пользователя (текущих или всех). Требует
         авторизации
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Фильтр сессий
         in: body
         name: input
@@ -484,7 +492,11 @@ paths:
         name: id
         required: true
         type: integer
-      - description: Параметры ставки (сумма и ключ идемпотентности)
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
+      - description: Параметры ставки
         in: body
         name: input
         required: true
@@ -626,6 +638,11 @@ paths:
     get:
       description: Возвращает все согласия с документами для текущего авторизованного
         пользователя
+      parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       produces:
       - application/json
       responses:
@@ -658,6 +675,10 @@ paths:
       - application/json
       description: Фиксирует согласие текущего пользователя с документом
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: ID документа
         in: body
         name: input
@@ -702,6 +723,10 @@ paths:
       description: Проверяет и возвращает согласие текущего пользователя с конкретным
         документом
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: ID документа
         in: path
         name: id
@@ -777,6 +802,10 @@ paths:
       description: Возвращает Presigned GET URL для скачивания файла владельцем (не
         более 1 раза в день)
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: ID предмета
         in: path
         name: id
@@ -829,6 +858,10 @@ paths:
       - application/json
       description: Передает предмет новому владельцу с сохранением истории передачи
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Параметры подарка
         in: body
         name: input
@@ -889,6 +922,10 @@ paths:
       description: Создает лот на аукционе для принадлежащего пользователю предмета
         со статусом draft или pending_review
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Параметры нового лота
         in: body
         name: input
@@ -942,6 +979,10 @@ paths:
         name: id
         required: true
         type: integer
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       produces:
       - application/json
       responses:
@@ -1016,6 +1057,10 @@ paths:
         name: id
         required: true
         type: integer
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Обновленные параметры лота
         in: body
         name: input
@@ -1071,6 +1116,10 @@ paths:
         name: id
         required: true
         type: integer
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Опциональные даты начала и окончания торгов
         in: body
         name: input
@@ -1120,6 +1169,11 @@ paths:
   /api/lot/my:
     get:
       description: Возвращает все лоты, созданные текущим пользователем
+      parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       produces:
       - application/json
       responses:
@@ -1151,6 +1205,11 @@ paths:
     post:
       description: Отменяет активную загрузку пользователя, удаляет временный файл
         из S3 и освобождает слот
+      parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       produces:
       - application/json
       responses:
@@ -1183,6 +1242,10 @@ paths:
         фонового парсинга. Ключ можно передать в заголовке X-Upload-Key или в теле
         JSON
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: UUID ключ загрузки
         in: header
         name: X-Upload-Key
@@ -1234,6 +1297,10 @@ paths:
     get:
       description: Проверяет текущий статус обработки файла по ключу загрузки
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: UUID ключ загрузки
         in: query
         name: key
@@ -1286,6 +1353,10 @@ paths:
       - application/json
       description: Генерирует Presigned PUT URL для прямой загрузки файла в S3
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Параметры загружаемого файла
         in: body
         name: input
@@ -1337,6 +1408,11 @@ paths:
   /api/user/me:
     delete:
       description: Выполняет мягкое удаление профиля текущего пользователя
+      parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       produces:
       - application/json
       responses:
@@ -1359,6 +1435,11 @@ paths:
       - user
     get:
       description: Возвращает данные текущего авторизованного пользователя
+      parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       produces:
       - application/json
       responses:
@@ -1390,6 +1471,10 @@ paths:
       - multipart/form-data
       description: Загружает и устанавливает квадратный аватар пользователя
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Файл изображения аватара (квадратный)
         in: formData
         name: file
@@ -1432,12 +1517,49 @@ paths:
       summary: Обновить аватар пользователя
       tags:
       - user
+  /api/user/me/freeCoin:
+    get:
+      description: Начисляет 1000 бесплатных монет на баланс авторизованного пользователя
+      parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Баланс успешно пополнен
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/user.User'
+              type: object
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Получить бесплатные монеты
+      tags:
+      - user
   /api/user/name:
     patch:
       consumes:
       - application/json
       description: Изменяет отображаемое имя текущего пользователя
       parameters:
+      - description: Ключ идемпотентности
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Новое имя пользователя
         in: body
         name: input

@@ -70,7 +70,7 @@ create table lots (
     constraint lots_winner_with_amount check ((winner_id is null) = (finish_amount is null))
 );
 
-create unique index ux_lot_item_active on lots (item_id) WHERE status = 'active';
+create unique index ux_lot_item_active on lots (ends_at) WHERE status = 'active';
 
 -- amount на что изменился баланс
 -- balance_after баланс после изменения
@@ -110,19 +110,6 @@ create table bids (
     created_at timestamptz not null default now(),
     unique (id, lot_id)
 );
-
-create table hold (
-    id bigint generated always as identity primary key,
-    lot_id bigint not null references lots(id),
-    user_id uuid not null references users(id),
-    bid_id bigint not null unique references bids(id),
-    amount int not null constraint amount_greater_zero check (amount > 0),
-    status text not null default 'active' constraint status_is check (status in ('active', 'released', 'captured')),
-    created_at timestamptz not null default now(),
-    foreign key (lot_id, bid_id) references bids(lot_id, id)
-);
-
-create unique index ux_hold_user_lot_active on hold (lot_id, user_id) where status = 'active';
 
 create table documents (
     id bigint generated always as identity primary key,

@@ -1,31 +1,30 @@
-import { mockDb } from './mocks/db';
-import { simulateLatency } from './mocks/latency';
-import { listDocumentsReal, getDocumentReal, recordConsentReal } from './real/docs';
-import type { Document } from './types';
+import {
+  listDocumentsReal,
+  getDocumentReal,
+  recordConsentReal,
+  getUserConsentsReal,
+  getConsentByDocumentIdReal,
+} from './real/docs';
+import type { Document, UserConsent } from './types';
 
-const USE_MOCKS = true;
+const USE_MOCKS = false;
 
 export async function listDocuments(): Promise<Document[]> {
-  if (USE_MOCKS) {
-    await simulateLatency();
-    return mockDb.listDocuments();
-  }
   return listDocumentsReal();
 }
 
-export async function getDocument(name: string): Promise<Document> {
-  if (USE_MOCKS) {
-    await simulateLatency();
-    return mockDb.getDocument(name);
-  }
-  return getDocumentReal(name);
+export async function getDocument(nameOrId: string | number): Promise<Document> {
+  return getDocumentReal(nameOrId);
 }
 
-export async function recordConsent(documentId: number): Promise<void> {
-  if (USE_MOCKS) {
-    await simulateLatency();
-    mockDb.recordConsent(documentId);
-    return;
-  }
+export async function recordConsent(documentId: number): Promise<UserConsent> {
   return recordConsentReal(documentId);
+}
+
+export async function getUserConsents(): Promise<UserConsent[]> {
+  return getUserConsentsReal();
+}
+
+export async function getConsentByDocumentId(documentId: number): Promise<UserConsent> {
+  return getConsentByDocumentIdReal(documentId);
 }

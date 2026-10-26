@@ -142,6 +142,7 @@ func (h *Handler) getByID(w http.ResponseWriter, r *http.Request) {
 // @Description Возвращает все лоты, созданные текущим пользователем
 // @Tags lot
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Produce json
 // @Success 200 {object} httpx.Response{data=[]Lot}
 // @Failure 401 {object} httpx.Response "Не авторизован"
@@ -174,6 +175,7 @@ func (h *Handler) getMyLots(w http.ResponseWriter, r *http.Request) {
 // @Description Создает лот на аукционе для принадлежащего пользователю предмета со статусом draft или pending_review
 // @Tags lot
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept json
 // @Produce json
 // @Param input body reqNewLot true "Параметры нового лота"
@@ -237,9 +239,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 // @Description Обновляет параметры лота продавцом по его ID (статус draft или pending_review)
 // @Tags lot
 // @Security BearerAuth
+// @Param id path int true "ID лота"
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept json
 // @Produce json
-// @Param id path int true "ID лота"
 // @Param input body reqNewLot true "Обновленные параметры лота"
 // @Success 200 {object} httpx.Response{data=Lot}
 // @Failure 400 {object} httpx.Response "Неверный ID или некорректные параметры"
@@ -308,8 +311,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 // @Description Отменяет лот продавца, если он еще не завершен и до старта больше часа
 // @Tags lot
 // @Security BearerAuth
-// @Produce json
 // @Param id path int true "ID лота"
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
+// @Produce json
 // @Success 200 {object} httpx.Response
 // @Failure 400 {object} httpx.Response "Неверный ID лота"
 // @Failure 401 {object} httpx.Response "Не авторизован"
@@ -362,9 +366,10 @@ type activateReq struct {
 // @Description Переводит лот продавца со статусом approved в статус active для старта торгов
 // @Tags lot
 // @Security BearerAuth
+// @Param id path int true "ID лота"
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept json
 // @Produce json
-// @Param id path int true "ID лота"
 // @Param input body activateReq false "Опциональные даты начала и окончания торгов"
 // @Success 200 {object} httpx.Response{data=Lot}
 // @Failure 400 {object} httpx.Response "Неверный ID лота или лот не в статусе approved"
@@ -461,23 +466,7 @@ func (h *Handler) RouterLot(authChain alice.Chain, adminChain alice.Chain) http.
 }
 
 type reqBid struct {
-	Amount         int    `json:"amount"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-}
-
-func (r *reqBid) check(headerKey string) error {
-	if r.Amount <= 0 {
-		return errors.New("amount must be greater than 0")
-	}
-	key := strings.TrimSpace(r.IdempotencyKey)
-	if key == "" {
-		key = strings.TrimSpace(headerKey)
-	}
-	if key == "" {
-		return errors.New("idempotency_key is required")
-	}
-	r.IdempotencyKey = key
-	return nil
+	Amount int `json:"amount"`
 }
 
 // bid размещает новую ставку на активный лот.
@@ -486,10 +475,11 @@ func (r *reqBid) check(headerKey string) error {
 // @Description Размещает новую ставку авторизованного пользователя на активный лот аукциона
 // @Tags bid
 // @Security BearerAuth
+// @Param id path int true "ID лота"
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept json
 // @Produce json
-// @Param id path int true "ID лота"
-// @Param input body reqBid true "Параметры ставки (сумма и ключ идемпотентности)"
+// @Param input body reqBid true "Параметры ставки"
 // @Success 200 {object} httpx.Response "Ставка успешно принята"
 // @Failure 400 {object} httpx.Response "Некорректная сумма ставки, меньший шаг или нехватка баланса"
 // @Failure 401 {object} httpx.Response "Не авторизован"
@@ -514,15 +504,6 @@ func (h *Handler) bid(w http.ResponseWriter, r *http.Request) {
 
 	req, err := httpx.DecodeJSON[reqBid](w, r)
 	if err != nil {
-		return
-	}
-
-	if err := req.check(r.Header.Get("Idempotency-Key")); err != nil {
-		apperr.Log(r.Context(), "lotHandler.bid.check", err)
-		httpx.WriteResponse(w, httpx.Response{
-			Code:  http.StatusBadRequest,
-			Error: err.Error(),
-		})
 		return
 	}
 

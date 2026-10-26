@@ -1469,3 +1469,81 @@ Accept: application/json
         }
     });
 %}
+
+### 11.1 ÐÐµÐ°Ð²Ñ‚Ð¾Ñ€Ð¸Ð·Ð¾Ð²Ð°Ð½Ð½Ñ‹Ð¹ Ð·Ð°Ð¿Ñ€Ð¾Ñ Ðº SSE Ð¿Ð¾Ñ‚Ð¾ÐºÑƒ ÑÑ‚Ð°Ð²Ð¾Ðº Ð»Ð¾Ñ‚Ð° (Ð±ÐµÐ· Ñ‚Ð¾ÐºÐµÐ½Ð° - 401 Unauthorized)
+GET {{host}}/api/bid/{{target_lot_id}}/stream
+Accept: text/event-stream
+
+> {%
+    client.test("Reject unauthenticated SSE connection (401 Unauthorized)", () => {
+        client.assert(response.status === 401, "ÐžÐ¶Ð¸Ð´Ð°Ð»ÑÑ ÑÑ‚Ð°Ñ‚ÑƒÑ 401 Unauthorized Ð´Ð»Ñ SSE Ð±ÐµÐ· Ñ‚Ð¾ÐºÐµÐ½Ð°, Ð¿Ð¾Ð»ÑƒÑ‡ÐµÐ½: " + response.status);
+    });
+%}
+
+### 11.2 ÐÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ñ‹Ð¹ Ð½ÐµÑ‡Ð¸ÑÐ»Ð¾Ð²Ð¾Ð¹ ID Ð² Ð¿ÑƒÑ‚Ð¸ SSE Ð¿Ð¾Ñ‚Ð¾ÐºÐ° ÑÑ‚Ð°Ð²Ð¾Ðº (400 Bad Request)
+GET {{host}}/api/bid/invalid_id/stream
+Authorization: Bearer {{attacker_token}}
+Accept: text/event-stream
+
+> {%
+    client.test("Reject non-numeric ID in SSE stream (400 Bad Request)", () => {
+        client.assert(response.status === 400, "ÐžÐ¶Ð¸Ð´Ð°Ð»ÑÑ ÑÑ‚Ð°Ñ‚ÑƒÑ 400 Bad Request, Ð¿Ð¾Ð»ÑƒÑ‡ÐµÐ½: " + response.status);
+    });
+%}
+
+### 11.3 ÐžÑ‚Ñ€Ð¸Ñ†Ð°Ñ‚ÐµÐ»ÑŒÐ½Ñ‹Ð¹ ID Ð»Ð¾Ñ‚Ð° Ð² SSE Ð¿Ð¾Ñ‚Ð¾ÐºÐµ ÑÑ‚Ð°Ð²Ð¾Ðº (400 Bad Request)
+GET {{host}}/api/bid/-1/stream
+Authorization: Bearer {{attacker_token}}
+Accept: text/event-stream
+
+> {%
+    client.test("Reject negative ID in SSE stream (400 Bad Request)", () => {
+        client.assert(response.status === 400, "ÐžÐ¶Ð¸Ð´Ð°Ð»ÑÑ ÑÑ‚Ð°Ñ‚ÑƒÑ 400 Bad Request, Ð¿Ð¾Ð»ÑƒÑ‡ÐµÐ½: " + response.status);
+    });
+%}
+
+### 11.4 ÐÑƒÐ»ÐµÐ²Ð¾Ð¹ ID Ð»Ð¾Ñ‚Ð° Ð² SSE Ð¿Ð¾Ñ‚Ð¾ÐºÐµ ÑÑ‚Ð°Ð²Ð¾Ðº (400 Bad Request)
+GET {{host}}/api/bid/0/stream
+Authorization: Bearer {{attacker_token}}
+Accept: text/event-stream
+
+> {%
+    client.test("Reject zero ID in SSE stream (400 Bad Request)", () => {
+        client.assert(response.status === 400, "ÐžÐ¶Ð¸Ð´Ð°Ð»ÑÑ ÑÑ‚Ð°Ñ‚ÑƒÑ 400 Bad Request, Ð¿Ð¾Ð»ÑƒÑ‡ÐµÐ½: " + response.status);
+    });
+%}
+
+### 11.5 SQL Injection Ð² ID Ð»Ð¾Ñ‚Ð° SSE Ð¿Ð¾Ñ‚Ð¾ÐºÐ° ÑÑ‚Ð°Ð²Ð¾Ðº
+GET {{host}}/api/bid/1' OR '1'='1/stream
+Authorization: Bearer {{attacker_token}}
+Accept: text/event-stream
+
+> {%
+    client.test("Safely handle SQL injection in SSE path ID without 500 crash", () => {
+        client.assert(response.status === 400 || response.status === 404, "ÐžÐ¶Ð¸Ð´Ð°Ð»ÑÑ 400/404, Ð¿Ð¾Ð»ÑƒÑ‡ÐµÐ½: " + response.status);
+        client.assert(response.status !== 500, "Ð¡ÐµÑ€Ð²ÐµÑ€ Ð½Ðµ Ð´Ð¾Ð»Ð¶ÐµÐ½ Ð¿Ð°Ð´Ð°Ñ‚ÑŒ Ñ 500 Ð½Ð° SQL injection Ð² SSE ID");
+    });
+%}
+
+### 11.6 Path Traversal Ð² SSE Ð¿Ð¾Ñ‚Ð¾ÐºÐµ ÑÑ‚Ð°Ð²Ð¾Ðº
+GET {{host}}/api/bid/../../../../etc/passwd/stream
+Authorization: Bearer {{attacker_token}}
+Accept: text/event-stream
+
+> {%
+    client.test("Safely handle path traversal in SSE path without 500 crash", () => {
+        client.assert(response.status === 400 || response.status === 404, "ÐžÐ¶Ð¸Ð´Ð°Ð»ÑÑ 400/404, Ð¿Ð¾Ð»ÑƒÑ‡ÐµÐ½: " + response.status);
+        client.assert(response.status !== 500, "Ð¡ÐµÑ€Ð²ÐµÑ€ Ð½Ðµ Ð´Ð¾Ð»Ð¶ÐµÐ½ Ð¿Ð°Ð´Ð°Ñ‚ÑŒ Ñ 500");
+    });
+%}
+
+### 11.7 Ð—Ð°Ð¿Ñ€Ð¾Ñ Ðº SSE Ð¿Ð¾Ñ‚Ð¾ÐºÑƒ ÑÑ‚Ð°Ð²Ð¾Ðº Ð½ÐµÑÑƒÑ‰ÐµÑÑ‚Ð²ÑƒÑŽÑ‰ÐµÐ³Ð¾ Ð»Ð¾Ñ‚Ð° (ID = 999999999)
+GET {{host}}/api/bid/999999999/stream
+Authorization: Bearer {{attacker_token}}
+Accept: text/event-stream
+
+> {%
+    client.test("Handle SSE stream for non-existent lot safely (empty stream or 200/404)", () => {
+        client.assert(response.status === 200 || response.status === 404, "ÐžÐ¶Ð¸Ð´Ð°Ð»ÑÑ ÑÑ‚Ð°Ñ‚ÑƒÑ 200 Ð¸Ð»Ð¸ 404, Ð¿Ð¾Ð»ÑƒÑ‡ÐµÐ½: " + response.status);
+    });
+%}

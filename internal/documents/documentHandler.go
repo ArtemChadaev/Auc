@@ -144,6 +144,7 @@ type consentReq struct {
 // @Description Фиксирует согласие текущего пользователя с документом
 // @Tags document
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Accept json
 // @Produce json
 // @Param input body consentReq true "ID документа"
@@ -189,6 +190,7 @@ func (h *Handler) createConsent(w http.ResponseWriter, r *http.Request) {
 // @Description Возвращает все согласия с документами для текущего авторизованного пользователя
 // @Tags document
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Produce json
 // @Success 200 {object} httpx.Response{data=[]UserConsent}
 // @Failure 401 {object} httpx.Response "Не авторизован"
@@ -216,6 +218,7 @@ func (h *Handler) getUserConsents(w http.ResponseWriter, r *http.Request) {
 // @Description Проверяет и возвращает согласие текущего пользователя с конкретным документом
 // @Tags document
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Produce json
 // @Param id path int true "ID документа"
 // @Success 200 {object} httpx.Response{data=UserConsent}

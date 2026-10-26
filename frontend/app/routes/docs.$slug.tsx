@@ -5,6 +5,19 @@ import { getDocument } from '~/api/docs';
 import type { Document } from '~/api/types';
 import { ErrorAlert } from '~/components/feedback/ErrorAlert';
 
+const DOC_TITLES: Record<string, string> = {
+  'terms-of-service': 'Пользовательское соглашение',
+  'privacy-policy': 'Политика конфиденциальности',
+  'virtual-currency-disclaimer': 'Уведомление о виртуальной валюте Coins',
+  'auction-rules': 'Правила платформы и Anti-Sniping',
+  'content-policy': 'Политика в отношении контента',
+  'acceptable-use-policy': 'Политика допустимого использования',
+  'cookie-policy': 'Политика использования файлов cookie',
+  terms: 'Пользовательское соглашение',
+  privacy: 'Политика конфиденциальности',
+  rules: 'Правила платформы и Anti-Sniping',
+};
+
 export default function DocPage() {
   const { slug } = useParams();
   const [doc, setDoc] = useState<Document | null>(null);
@@ -46,11 +59,7 @@ export default function DocPage() {
             </div>
             <div>
               <h1 className="text-lg sm:text-xl font-bold text-slate-900">
-                {doc.name === 'terms'
-                  ? 'Пользовательское соглашение'
-                  : doc.name === 'privacy'
-                  ? 'Политика конфиденциальности'
-                  : 'Правила платформы и Anti-Sniping'}
+                {DOC_TITLES[doc.name] || doc.name}
               </h1>
               <p className="text-xs text-slate-400 mt-0.5">Версия {doc.version}</p>
             </div>

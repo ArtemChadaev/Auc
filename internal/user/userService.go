@@ -328,3 +328,10 @@ func (s *Service) CreateAdmin() error {
 	slog.Info("create new user", slog.String("uid", uid.String()), slog.Any("tokens", tokens))
 	return nil
 }
+
+func (s *Service) changeBalance(ctx context.Context, uid uuid.UUID, changeBalance int) error {
+	if err := s.repo.changeBalance(ctx, uid, changeBalance); err != nil {
+		return fmt.Errorf("userService.changeBalance: %w", err)
+	}
+	return nil
+}
