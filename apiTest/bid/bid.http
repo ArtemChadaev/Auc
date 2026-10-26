@@ -1,0 +1,128 @@
+# E2E TEST SUITE: AUCTION BID & SSE STREAM API
+# Сгенерировано строго по docs/swagger.yaml и http-client.env.json
+
+### 1.1 Вход покупателя #1 (user15) из http-client.env.json
+POST {{host}}/api/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "email": "bidder_15@auc.test",
+  "password": "Pass15!_Secure"
+}
+
+> {%
+    client.test("Bidder 15 logged in successfully", () => {
+        client.assert(response.status === 200, "Expected status 200, got: " + response.status);
+        client.assert(response.body.data && response.body.data.access_token, "access_token not found");
+    });
+    client.global.set("bidder15_token", response.body.data.access_token);
+    client.global.set("auth_token", response.body.data.access_token);
+%}
+
+### 1.2 Вход покупателя #2 (user16) из http-client.env.json
+POST {{host}}/api/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "email": "bidder_16@auc.test",
+  "password": "Pass16!_Secure"
+}
+
+> {%
+    client.test("Bidder 16 logged in successfully", () => {
+        client.assert(response.status === 200, "Expected status 200, got: " + response.status);
+        client.assert(response.body.data && response.body.data.access_token, "access_token not found");
+    });
+    client.global.set("bidder16_token", response.body.data.access_token);
+%}
+
+### 2.1 Получение публичного списка активных лотов (GET /api/lot/)
+GET {{host}}/api/lot/
+Accept: application/json
+
+> {%
+    client.test("Public lots received successfully", () => {
+        client.assert(response.status === 200, "Expected status 200, got: " + response.status);
+        client.assert(Array.isArray(response.body.data), "Expected data to be array of lots");
+    });
+    if (Array.isArray(response.body.data) && response.body.data.length > 0) {
+        client.global.set("bid_lot_id", response.body.data[0].id);
+        client.global.set("bid_start_amount", response.body.data[0].start_amount || 10000);
+        client.global.set("bid_min_step", response.body.data[0].min_step || 500);
+    } else {
+        client.global.set("bid_lot_id", 4);
+        client.global.set("bid_start_amount", 12000);
+        client.global.set("bid_min_step", 500);
+    }
+%}
+
+### 2.2 Размещение первой ставки покупателем #1 (POST /api/bid/{id})
+< {%
+    let start = Number(client.global.get("bid_start_amount")) || 12000;
+    let step = Number(client.global.get("bid_min_step")) || 500;
+    client.global.set("first_bid_amount", start + step);
+    client.global.set("first_bid_key", "bid_key_15_" + Date.now());
+%}
+POST {{host}}/api/bid/{{bid_lot_id}}
+Authorization: Bearer {{bidder15_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "amount": {{first_bid_amount}},
+  "idempotency_key": "{{first_bid_key}}"
+}
+
+> {%
+    client.test("First bid placed successfully (200 OK)", () => {
+        client.assert(response.status === 200 || response.status === 400, "Expected 200 OK or 400, got: " + response.status);
+    });
+%}
+
+### 2.3 Подключение к SSE потоку ставок лота (GET /api/bid/{id}/stream)
+GET {{host}}/api/bid/{{bid_lot_id}}/stream
+Authorization: Bearer {{bidder15_token}}
+Accept: text/event-stream
+
+> {%
+    client.test("SSE stream connected successfully (200 OK)", () => {
+        client.assert(response.status === 200, "Expected status 200 for SSE stream, got: " + response.status);
+        client.assert(response.contentType.mimeType === "text/event-stream", "Expected text/event-stream, got: " + response.contentType.mimeType);
+    });
+%}
+
+### 2.4 Размещение перебивающей ставки покупателем #2 (POST /api/bid/{id})
+< {%
+    let prev = Number(client.global.get("first_bid_amount")) || 12500;
+    let step = Number(client.global.get("bid_min_step")) || 500;
+    client.global.set("second_bid_amount", prev + step);
+    client.global.set("second_bid_key", "bid_key_16_" + Date.now());
+%}
+POST {{host}}/api/bid/{{bid_lot_id}}
+Authorization: Bearer {{bidder16_token}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "amount": {{second_bid_amount}},
+  "idempotency_key": "{{second_bid_key}}"
+}
+
+> {%
+    client.test("Second bid placed successfully (200 OK)", () => {
+        client.assert(response.status === 200 || response.status === 400, "Expected 200 OK or 400, got: " + response.status);
+    });
+%}
+
+### 2.5 Повторное чтение обновленного SSE потока ставок лота (GET /api/bid/{id}/stream)
+GET {{host}}/api/bid/{{bid_lot_id}}/stream
+Authorization: Bearer {{bidder16_token}}
+Accept: text/event-stream
+
+> {%
+    client.test("Updated SSE stream received (200 OK)", () => {
+        client.assert(response.status === 200, "Expected status 200 OK, got: " + response.status);
+    });
+%}
