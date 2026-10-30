@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router';
 import { useAuth } from '~/hooks/useAuth';
 import { listUserItems } from '~/api/items';
 import { listLots, getMyLots } from '~/api/lots';
 import { listTransactions } from '~/api/profile';
 import type { Item, Lot, LedgerEntry } from '~/api/types';
-import { useUserStream } from '~/realtime/useUserStream';
 import { BalanceCard } from '~/components/profile/BalanceCard';
 import { MyItems } from '~/components/profile/MyItems';
 import { MyLots } from '~/components/profile/MyLots';
@@ -23,10 +22,17 @@ export default function ProfilePage() {
   const [participatingLots, setParticipatingLots] = useState<Lot[]>([]);
   const [transactions, setTransactions] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshingTx, setRefreshingTx] = useState(false);
   const [error, setError] = useState<unknown | null>(null);
+  const lastLoadTimeRef = useRef<number>(0);
 
   const loadProfileData = useCallback(async () => {
-    if (!user) return;
+    if (!user?.id) return;
+    const now = Date.now();
+    if (now - lastLoadTimeRef.current < 1500) {
+      return;
+    }
+    lastLoadTimeRef.current = now;
     setLoading(true);
     setError(null);
     try {
@@ -54,7 +60,19 @@ export default function ProfilePage() {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user?.id]);
+
+  const handleRefreshTransactions = async () => {
+    setRefreshingTx(true);
+    try {
+      const txData = await listTransactions();
+      setTransactions(txData);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setRefreshingTx(false);
+    }
+  };
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -65,12 +83,6 @@ export default function ProfilePage() {
       loadProfileData();
     }
   }, [authLoading, isAuthenticated, loadProfileData, navigate]);
-
-  // Реалтайм-слушатель персональных событий (баланс, новые транзакции)
-  useUserStream(() => {
-    // При изменении баланса перезапрашиваем свежие транзакции
-    listTransactions().then(setTransactions).catch(() => {});
-  });
 
   if (authLoading || (!isAuthenticated && loading)) {
     return (
@@ -119,7 +131,11 @@ export default function ProfilePage() {
       <MyBids lots={participatingLots} />
 
       {/* 5. История операций */}
-      <TransactionsTable transactions={transactions} />
+      <TransactionsTable
+        transactions={transactions}
+        onRefresh={handleRefreshTransactions}
+        refreshing={refreshingTx}
+      />
     </div>
   );
 }

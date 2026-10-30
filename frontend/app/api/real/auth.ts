@@ -1,6 +1,21 @@
 import { api, setStoredToken, setStoredRefreshId, getStoredRefreshId, generateIdempotencyKey } from '~/api/client';
 import type { User, TokenResponse, UserSession } from '~/api/types';
 
+export const S3_PHOTOS_BASE = 'https://s3.ru1.storage.beget.cloud/d7201f92dc71-auc-photos';
+
+export function resolveAvatarUrl(avatarId?: string | null): string | null {
+  if (!avatarId) return null;
+  if (avatarId.startsWith('http://') || avatarId.startsWith('https://') || avatarId.startsWith('data:')) {
+    return avatarId;
+  }
+  if (avatarId.startsWith('avatar-')) {
+    return null;
+  }
+  const cleanId = avatarId.replace(/^\/api\/lot\/photo\//, '').trim();
+  if (!cleanId) return null;
+  return `${S3_PHOTOS_BASE}/${cleanId}`;
+}
+
 /**
  * POST /api/auth/login
  * Аутентификация пользователя по email и паролю, возвращает access и refresh токены
@@ -61,6 +76,13 @@ export async function logoutReal(): Promise<void> {
   } finally {
     setStoredToken(null);
     setStoredRefreshId(null);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('auc_user_items');
+      } catch {
+        // Ignore
+      }
+    }
   }
 }
 
@@ -82,6 +104,7 @@ export async function getCurrentUserReal(): Promise<User> {
   const user = await api.get<User>('/api/user/me');
   return {
     ...user,
+    avatar_id: resolveAvatarUrl(user.avatar_id),
     balance: Number(user.balance ?? 0),
     hold: Number(user.hold ?? 0),
   };
@@ -109,16 +132,25 @@ export async function deleteCurrentUserReal(): Promise<void> {
   await api.delete('/api/user/me');
   setStoredToken(null);
   setStoredRefreshId(null);
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem('auc_user_items');
+    } catch {
+      // Ignore
+    }
+  }
 }
 
 /**
  * PUT /api/user/me/avatar
- * Загружает и устанавливает квадратный аватар пользователя (multipart/form-data)
+ * Загружает и устанавливает аватар пользователя (multipart/form-data)
  */
 export async function updateAvatarReal(file: File | Blob): Promise<{ image: string }> {
   const formData = new FormData();
   formData.append('file', file);
-  return api.put<{ image: string }>('/api/user/me/avatar', formData);
+  const res = await api.put<{ image: string }>('/api/user/me/avatar', formData);
+  const resolved = resolveAvatarUrl(res?.image) || res?.image || '';
+  return { image: resolved };
 }
 
 /**
@@ -134,6 +166,7 @@ export async function getFreeCoinReal(): Promise<User> {
   });
   return {
     ...user,
+    avatar_id: resolveAvatarUrl(user.avatar_id),
     balance: Number(user.balance ?? 0),
     hold: Number(user.hold ?? 0),
   };

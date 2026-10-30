@@ -414,6 +414,38 @@ func (h *Handler) getDownloadURL(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getMyItems возвращает список всех предметов текущего авторизованного пользователя.
+//
+// @Summary Получить предметы текущего пользователя
+// @Description Возвращает список всех предметов, владельцем которых является текущий авторизованный пользователь
+// @Tags item
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} httpx.Response{data=[]Item}
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/item/me [get]
+func (h *Handler) getMyItems(w http.ResponseWriter, r *http.Request) {
+	uid, err := cfg.GetUID(r.Context())
+	if err != nil {
+		apperr.Log(r.Context(), "getMyItems.GetUID", err)
+		httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
+		return
+	}
+
+	items, err := h.service.getMyItems(r.Context(), uid)
+	if err != nil {
+		apperr.Log(r.Context(), "getMyItems", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+		return
+	}
+
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+		Data: items,
+	})
+}
+
 func (h *Handler) RouterUpload(authChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /url", h.getUploadURL)
@@ -425,6 +457,7 @@ func (h *Handler) RouterUpload(authChain alice.Chain) http.Handler {
 
 func (h *Handler) RouterItem(authChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /me", h.getMyItems)
 	mux.HandleFunc("GET /{id}/download", h.getDownloadURL)
 	mux.HandleFunc("POST /gift", h.giftItem)
 	return authChain.Then(mux)

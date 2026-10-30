@@ -10,10 +10,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 	"io"
 	"log/slog"
 	"os/exec"
@@ -24,27 +20,31 @@ import (
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
+	"github.com/ArtemChadaev/Auction/cmd/valkey"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/argon2"
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/tiff"
-	_ "golang.org/x/image/webp"
 )
 
 var (
-	ErrImageNotSquare = apperr.NewAppErrorString("image must be square", -4)
-	ErrInvalidImage   = apperr.NewAppErrorString("invalid image data", -4)
+	ErrImageNotSquare       = apperr.NewAppErrorString("image must be square", -4)
+	ErrInvalidImage         = apperr.NewAppErrorString("invalid image data", -4)
+	ErrFreeCoinLimitReached = apperr.NewAppErrorString("free coins limit reached: only once per day allowed", -4)
 )
 
 type Service struct {
-	repo *Repo
-	s3   *storageS3.Client
+	repo   *Repo
+	pool   *pgxpool.Pool
+	s3     *storageS3.Client
+	valkey *valkey.Client
 }
 
-func NewService(repo *Repo, s3 *storageS3.Client) *Service {
+func NewService(repo *Repo, pool *pgxpool.Pool, s3 *storageS3.Client, valkey *valkey.Client) *Service {
 	return &Service{
-		repo: repo,
-		s3:   s3,
+		repo:   repo,
+		pool:   pool,
+		s3:     s3,
+		valkey: valkey,
 	}
 }
 
@@ -234,20 +234,11 @@ func (s *Service) updateAvatar(ctx context.Context, uid uuid.UUID, r io.Reader) 
 		return uuid.Nil(), fmt.Errorf("userService.updateAvatar: read file: %w", err)
 	}
 
-	// 1. Проверяем, что изображение квадратное
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(fileBytes))
-	if err != nil {
-		return uuid.Nil(), fmt.Errorf("userService.updateAvatar: %w", ErrInvalidImage)
-	}
-	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width != cfg.Height {
-		return uuid.Nil(), fmt.Errorf("userService.updateAvatar: %w", ErrImageNotSquare)
-	}
-
-	// 2. Используем ffmpeg для масштабирования в 256x256 (если был больше) и кодирования в WebP
+	// Центрируем изображение в квадрат, масштабируем до 256x256 и конвертируем в WebP через ffmpeg
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-y",
 		"-i", "pipe:0",
-		"-vf", "scale='min(256,iw)':'min(256,ih)'",
+		"-vf", "crop='min(iw,ih)':'min(iw,ih)',scale='min(256,iw)':'min(256,ih)'",
 		"-c:v", "libwebp",
 		"-f", "webp",
 		"pipe:1",
@@ -262,18 +253,21 @@ func (s *Service) updateAvatar(ctx context.Context, uid uuid.UUID, r io.Reader) 
 		return uuid.Nil(), fmt.Errorf("userService.updateAvatar: ffmpeg transcode failed: %w, stderr: %s", apperr.NewAppError(err, 4), stderr.String())
 	}
 	webpBytes := out.Bytes()
+	if len(webpBytes) == 0 {
+		return uuid.Nil(), fmt.Errorf("userService.updateAvatar: %w", ErrInvalidImage)
+	}
 
-	// 3. Генерируем SHA-256 хеш полученного WebP
+	// Генерируем SHA-256 хеш полученного WebP
 	sum := sha256.Sum256(webpBytes)
 	hash := hex.EncodeToString(sum[:])
 
-	// 4. Запрос в userRepo: insertS3Hash с RETURNING id, (xmax = 0) AS is_inserted
+	// Запрос в userRepo: insertS3Hash с RETURNING id, (xmax = 0) AS is_inserted
 	s3ID, isInserted, err := s.repo.insertS3Hash(ctx, hash)
 	if err != nil {
 		return uuid.Nil(), fmt.Errorf("userService.updateAvatar: %w", err)
 	}
 
-	// 5. Если до этого хеша в S3 не было, загружаем с "image/webp" и key = id
+	// Если до этого хеша в S3 не было, загружаем с "image/webp" и key = id
 	if isInserted {
 		if s.s3 == nil {
 			return uuid.Nil(), fmt.Errorf("userService.updateAvatar: s3 client is not configured")
@@ -283,7 +277,7 @@ func (s *Service) updateAvatar(ctx context.Context, uid uuid.UUID, r io.Reader) 
 		}
 	}
 
-	// 6. Как загрузится (или если уже было), обновляем в БД строку пользователя
+	// Обновляем в БД строку пользователя
 	if err = s.repo.updateAvatar(ctx, uid, s3ID); err != nil {
 		return uuid.Nil(), fmt.Errorf("userService.updateAvatar: %w", err)
 	}
@@ -330,8 +324,54 @@ func (s *Service) CreateAdmin() error {
 }
 
 func (s *Service) changeBalance(ctx context.Context, uid uuid.UUID, changeBalance int) error {
-	if err := s.repo.changeBalance(ctx, uid, changeBalance); err != nil {
+	if _, err := s.repo.changeBalance(ctx, uid, changeBalance); err != nil {
 		return fmt.Errorf("userService.changeBalance: %w", err)
 	}
 	return nil
+}
+
+// claimFreeCoin начисляет 1000 бесплатных монет пользователю не чаще одного раза в день.
+// Лимит сбрасывается ежедневно в 00:00:00 UTC с сохранением состояния в Redis/Valkey.
+func (s *Service) claimFreeCoin(ctx context.Context, uid uuid.UUID) (User, error) {
+	now := time.Now().UTC()
+	dateStr := now.Format("2006-01-02")
+	redisKey := fmt.Sprintf("freecoin:user:%s:%s", uid.String(), dateStr)
+
+	// Время до следующего 00:00:00 UTC
+	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	ttl := time.Until(midnight)
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+
+	if s.valkey != nil && s.valkey.Raw() != nil {
+		ok, err := s.valkey.Raw().SetNX(ctx, redisKey, "1", ttl).Result()
+		if err != nil {
+			return User{}, fmt.Errorf("userService.claimFreeCoin: check limit in redis: %w", apperr.NewAppError(err, 4))
+		}
+		if !ok {
+			return User{}, ErrFreeCoinLimitReached
+		}
+	}
+
+	if err := s.changeBalance(ctx, uid, 1000); err != nil {
+		// При сбое БД удаляем ключ, чтобы пользователь не потерял бонус
+		if s.valkey != nil && s.valkey.Raw() != nil {
+			delCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = s.valkey.Raw().Del(delCtx, redisKey).Err()
+		}
+		return User{}, fmt.Errorf("userService.claimFreeCoin: %w", err)
+	}
+
+	user, err := s.getUser(ctx, uid)
+	if err != nil {
+		return User{}, fmt.Errorf("userService.claimFreeCoin: %w", err)
+	}
+
+	return user, nil
+}
+
+func (s *Service) getTransactions(ctx context.Context, uid uuid.UUID) ([]LedgerEntry, error) {
+	return s.repo.getLedgerEntries(ctx, uid)
 }

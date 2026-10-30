@@ -10,8 +10,8 @@ import {
   Loader2,
   Clock,
   Eye,
-  Layers,
   Sparkles,
+  XCircle,
 } from 'lucide-react';
 import type { Lot, LotStatus } from '~/api/types';
 import { formatCoins } from '~/lib/money';
@@ -23,7 +23,7 @@ interface MyLotsProps {
   onRefresh?: () => void;
 }
 
-type TabKey = 'all' | 'draft' | 'pending_review' | 'approved' | 'active' | 'finished';
+type TabKey = 'all' | 'draft' | 'pending_review' | 'approved' | 'active' | 'finished' | 'rejected';
 
 export function MyLots({ lots, onRefresh }: MyLotsProps) {
   const navigate = useNavigate();
@@ -34,7 +34,11 @@ export function MyLots({ lots, onRefresh }: MyLotsProps) {
 
   // Неначавшиеся / недоделанные лоты
   const unstartedLots = lots.filter(
-    (l) => l.status === 'draft' || l.status === 'pending_review' || l.status === 'approved'
+    (l) =>
+      l.status === 'draft' ||
+      l.status === 'pending_review' ||
+      l.status === 'approved' ||
+      l.status === 'rejected'
   );
 
   const draftLots = lots.filter((l) => l.status === 'draft');
@@ -42,6 +46,7 @@ export function MyLots({ lots, onRefresh }: MyLotsProps) {
   const approvedLots = lots.filter((l) => l.status === 'approved');
   const activeLots = lots.filter((l) => l.status === 'active');
   const finishedLots = lots.filter((l) => l.status === 'finished');
+  const rejectedLots = lots.filter((l) => l.status === 'rejected');
 
   const filteredLots = lots.filter((l) => {
     if (activeTab === 'all') return true;
@@ -90,6 +95,13 @@ export function MyLots({ lots, onRefresh }: MyLotsProps) {
         return (
           <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-emerald-50 text-emerald-700 border border-emerald-300">
             Идут торги (Active)
+          </span>
+        );
+      case 'rejected':
+        return (
+          <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-rose-50 text-rose-700 border border-rose-300 flex items-center gap-1">
+            <XCircle className="w-2.5 h-2.5 text-rose-600" />
+            <span>Отклонён модерацией</span>
           </span>
         );
       case 'finished':
@@ -242,6 +254,20 @@ export function MyLots({ lots, onRefresh }: MyLotsProps) {
           </button>
         )}
 
+        {rejectedLots.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('rejected')}
+            className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
+              activeTab === 'rejected'
+                ? 'bg-rose-600 text-white font-bold'
+                : 'text-rose-700 hover:bg-rose-50'
+            }`}
+          >
+            Отклонённые ({rejectedLots.length})
+          </button>
+        )}
+
         {finishedLots.length > 0 && (
           <button
             type="button"
@@ -266,7 +292,8 @@ export function MyLots({ lots, onRefresh }: MyLotsProps) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
           {filteredLots.map((lot) => {
             const isApproved = lot.status === 'approved';
-            const isEditable = lot.status === 'draft' || lot.status === 'pending_review';
+            const isRejected = lot.status === 'rejected';
+            const isEditable = lot.status === 'draft' || lot.status === 'pending_review' || isRejected;
             const isActivating = activatingId === lot.id;
 
             return (
@@ -275,6 +302,8 @@ export function MyLots({ lots, onRefresh }: MyLotsProps) {
                 className={`p-3.5 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
                   isApproved
                     ? 'bg-sky-50/40 border-sky-200 shadow-xs'
+                    : isRejected
+                    ? 'bg-rose-50/30 border-rose-200 shadow-xs'
                     : 'bg-white border-slate-200/80 hover:border-slate-300'
                 }`}
               >
@@ -290,6 +319,13 @@ export function MyLots({ lots, onRefresh }: MyLotsProps) {
                     <p className="text-xs text-slate-500 line-clamp-2 mt-0.5">
                       {lot.description.short_text}
                     </p>
+                  )}
+
+                  {isRejected && lot.description?.reject_reason && (
+                    <div className="p-2 bg-rose-50 border border-rose-200 rounded-lg text-[11px] text-rose-700 mt-2 flex items-start gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+                      <span>Причина отклонения: {lot.description.reject_reason}</span>
+                    </div>
                   )}
 
                   <div className="grid grid-cols-2 gap-2 mt-3 pt-2.5 border-t border-slate-100 text-xs">
@@ -338,7 +374,7 @@ export function MyLots({ lots, onRefresh }: MyLotsProps) {
                     </button>
                   )}
 
-                  {/* Кнопка редактирования черновика или лота на модерации */}
+                  {/* Кнопка редактирования черновика или лота на модерации / отклонённого */}
                   {isEditable && (
                     <Link
                       to={`/lots/new?edit_id=${lot.id}`}

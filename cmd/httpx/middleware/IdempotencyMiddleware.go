@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"strings"
@@ -23,8 +24,8 @@ const (
 	StatusProcessing = "PROCESSING"
 	StatusCompleted  = "COMPLETED"
 
-	idempotencyProcessingTTL = 5 * time.Minute
-	idempotencyCompletedTTL  = time.Hour
+	idempotencyProcessingTTL = 10 * time.Second
+	idempotencyCompletedTTL  = 10 * time.Second
 )
 
 type IdempotencyRecord struct {
@@ -115,6 +116,7 @@ func Idempotency(vk *valkey.Client) alice.Constructor {
 					}
 					w.WriteHeader(statusCode)
 					_, _ = w.Write(record.Body)
+					slog.DebugContext(r.Context(), "apply idempotency")
 					return
 				default:
 					httpx.WriteResponse(w, httpx.ErrRespInternalServer)

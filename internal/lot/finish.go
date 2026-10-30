@@ -160,7 +160,7 @@ func (r *Repo) allFinish(ctx context.Context) ([]int64, error) {
 	if err != nil {
 		return nil, fmt.Errorf("finish.allFinish: %w", storage.ErrRepo(err))
 	}
-	ids, err := pgx.CollectRows(rows, pgx.RowToStructByName[int64])
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
 	if err != nil {
 		return nil, fmt.Errorf("finish.allFinish: %w", storage.ErrRepo(err))
 	}

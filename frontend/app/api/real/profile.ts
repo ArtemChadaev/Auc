@@ -1,35 +1,27 @@
+import { api } from '../client';
 import { getCurrentUserReal, getFreeCoinReal } from './auth';
 import { getMyLotsReal } from './lots';
 import type { LedgerEntry, User } from '~/api/types';
 
-const STORED_LEDGER_KEY = 'auc_user_ledger';
-
-export function saveTransactionLocally(entry: LedgerEntry): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const raw = localStorage.getItem(STORED_LEDGER_KEY);
-    const list: LedgerEntry[] = raw ? JSON.parse(raw) : [];
-    list.unshift(entry);
-    localStorage.setItem(STORED_LEDGER_KEY, JSON.stringify(list));
-  } catch {
-    // Ignore storage quota
-  }
-}
-
 /**
  * GET /api/user/transactions
- * Возвращает историю операций пользователя
+ * Возвращает историю операций пользователя с сервера
  */
 export async function listTransactionsReal(): Promise<LedgerEntry[]> {
-  const localTx: LedgerEntry[] = (() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      const raw = localStorage.getItem(STORED_LEDGER_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
+  try {
+    const serverEntries = await api.get<LedgerEntry[]>('/api/user/transactions');
+    if (Array.isArray(serverEntries)) {
+      return serverEntries.map((e) => ({
+        ...e,
+        id: Number(e.id),
+        amount: Number(e.amount),
+        balance_after: Number(e.balance_after),
+        lot_id: e.lot_id ? Number(e.lot_id) : undefined,
+      }));
     }
-  })();
+  } catch {
+    // fallback if server fails
+  }
 
   try {
     const myLots = await getMyLotsReal().catch(() => []);
@@ -48,13 +40,12 @@ export async function listTransactionsReal(): Promise<LedgerEntry[]> {
       }
     });
 
-    const combined = [...localTx, ...dynamicEntries];
-    const unique = Array.from(new Map(combined.map((e) => [e.id, e])).values());
+    const unique = Array.from(new Map(dynamicEntries.map((e) => [e.id, e])).values());
     return unique.sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
   } catch {
-    return localTx;
+    return [];
   }
 }
 

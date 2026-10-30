@@ -1,21 +1,17 @@
 import { api, generateIdempotencyKey } from '~/api/client';
-import { getMyLotsReal } from './lots';
-import type { Item, CreateItemInput, DownloadUrlResponse, ItemType } from '~/api/types';
+import type { Item, CreateItemInput, DownloadUrlResponse } from '~/api/types';
 
 const STORED_ITEMS_KEY = 'auc_user_items';
 
-export function saveUserItemLocally(item: Item): void {
+/**
+ * Очищает устаревший оффлайн-кэш предметов в браузере
+ */
+export function saveUserItemLocally(_item?: Item): void {
   if (typeof window === 'undefined') return;
   try {
-    const raw = localStorage.getItem(STORED_ITEMS_KEY);
-    const list: Item[] = raw ? JSON.parse(raw) : [];
-    const exists = list.some((i) => i.id === item.id);
-    if (!exists) {
-      list.unshift(item);
-      localStorage.setItem(STORED_ITEMS_KEY, JSON.stringify(list));
-    }
+    localStorage.removeItem(STORED_ITEMS_KEY);
   } catch {
-    // Ignore storage quota
+    // Ignore
   }
 }
 
@@ -51,47 +47,28 @@ export async function giftItemReal(
 }
 
 /**
- * Получение списка предметов текущего пользователя
- * (объединяет загруженные в S3 предметы и предметы из лотов продавца)
+ * GET /api/item/me
+ * Получение актуального списка предметов текущего авторизованного пользователя из БД
  */
 export async function listUserItemsReal(): Promise<Item[]> {
-  const localItems: Item[] = (() => {
-    if (typeof window === 'undefined') return [];
+  // Очищаем устаревший локальный кэш, если он остался в браузере
+  if (typeof window !== 'undefined') {
     try {
-      const raw = localStorage.getItem(STORED_ITEMS_KEY);
-      return raw ? JSON.parse(raw) : [];
+      localStorage.removeItem(STORED_ITEMS_KEY);
     } catch {
-      return [];
+      // Ignore
     }
-  })();
+  }
 
   try {
-    const myLots = await getMyLotsReal().catch(() => []);
-    const lotItems: Item[] = myLots
-      .filter((lot) => lot.item_id)
-      .map((lot) => ({
-        id: lot.item_id,
-        creator_id: lot.seller_id,
-        owner_id: lot.seller_id,
-        s3_id: `s3-${lot.item_id}`,
-        type: (lot.item_summary?.type as ItemType) || ((lot.description as any)?.type as ItemType) || 'image',
-        metadata: {
-          title: lot.title,
-          description: lot.description?.text,
-        },
-        created_at: lot.created_at,
-      }));
-
-    // Объединяем уникальные предметы
-    const allMap = new Map<number, Item>();
-    lotItems.forEach((i) => allMap.set(i.id, i));
-    localItems.forEach((i) => allMap.set(i.id, i));
-
-    return Array.from(allMap.values()).sort(
+    const items = await api.get<Item[]>('/api/item/me');
+    if (!Array.isArray(items)) return [];
+    return items.sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
-  } catch {
-    return localItems;
+  } catch (err) {
+    console.warn('Failed to load user items from /api/item/me:', err);
+    return [];
   }
 }
 
@@ -115,7 +92,7 @@ export async function getItemReal(id: number): Promise<Item> {
 }
 
 /**
- * Создание предмета (при ручном вызове сохраняет локально)
+ * Создание предмета (при ручном вызове)
  */
 export async function createItemReal(input: CreateItemInput): Promise<Item> {
   const item: Item = {
@@ -132,6 +109,5 @@ export async function createItemReal(input: CreateItemInput): Promise<Item> {
     created_at: new Date().toISOString(),
   };
 
-  saveUserItemLocally(item);
   return item;
 }

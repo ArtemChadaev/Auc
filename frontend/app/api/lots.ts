@@ -6,11 +6,24 @@ import {
   cancelLotReal,
   getMyLotsReal,
   activateLotReal,
+  uploadLotPhotoReal,
+  getPhotoPrefixReal,
+  resolvePhotoUrl,
   cacheLot,
 } from './real/lots';
 import type { Lot, LotFilter, LotListResponse, CreateLotInput } from './types';
 
 const USE_MOCKS = false;
+
+export async function uploadLotPhoto(file: File | Blob): Promise<{ url: string; id: string }> {
+  return uploadLotPhotoReal(file);
+}
+
+export async function getPhotoPrefix(): Promise<string> {
+  return getPhotoPrefixReal();
+}
+
+export { resolvePhotoUrl };
 
 export async function listLots(filter: LotFilter = {}): Promise<LotListResponse> {
   return listLotsReal(filter);

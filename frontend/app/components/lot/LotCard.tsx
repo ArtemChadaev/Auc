@@ -4,6 +4,7 @@ import { Users, Coins, Sparkles, FileBox, FileCode } from 'lucide-react';
 import type { Lot } from '~/api/types';
 import { formatCoins } from '~/lib/money';
 import { CountdownBadge } from './CountdownBadge';
+import { resolvePhotoUrl } from '~/api/lots';
 
 interface LotCardProps {
   lot: Lot;
@@ -24,13 +25,25 @@ export function LotCard({ lot, highlightLeader, interactive = true }: LotCardPro
     }
   }, [lot.current_bid, prevPrice]);
 
+  const rawPreview =
+    lot.item_summary?.preview && lot.item_summary.preview !== '/placeholder.svg'
+      ? lot.item_summary.preview
+      : (lot.description?.media?.[0] as any)?.url ||
+        lot.description?.images?.[0] ||
+        lot.description?.photo?.[0] ||
+        '/placeholder.svg';
+  const previewImage = resolvePhotoUrl(rawPreview);
+
   const cardContent = (
     <>
       {/* Компактное превью с соотношением 16:9 */}
       <div className="relative aspect-16/10 w-full bg-slate-100 overflow-hidden">
         <img
-          src="/placeholder.svg"
+          src={previewImage}
           alt={lot.title}
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).src = '/placeholder.svg';
+          }}
           className={`w-full h-full object-cover transition-transform duration-300 ${
             interactive ? 'group-hover:scale-103' : ''
           }`}

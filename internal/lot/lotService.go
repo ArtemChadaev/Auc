@@ -3,23 +3,33 @@ package lot
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"time"
 	"uuid"
 
+	"github.com/ArtemChadaev/Auction/cmd/mimeType"
 	"github.com/ArtemChadaev/Auction/cmd/storage"
+	"github.com/ArtemChadaev/Auction/cmd/storageS3"
+	"github.com/ArtemChadaev/Auction/cmd/valkey"
 	"github.com/ArtemChadaev/Auction/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 type Service struct {
-	repo *Repo
-	pool *pgxpool.Pool
+	repo     *Repo
+	pool     *pgxpool.Pool
+	photosS3 *storageS3.Client
+	valkey   *valkey.Client
 }
 
-func NewService(repo *Repo, pool *pgxpool.Pool) *Service {
-	return &Service{repo: repo, pool: pool}
+func NewService(repo *Repo, pool *pgxpool.Pool, photosS3 *storageS3.Client, valkey *valkey.Client) *Service {
+	return &Service{repo: repo, pool: pool, photosS3: photosS3, valkey: valkey}
 }
 
 func (s *Service) list(ctx context.Context) ([]Lot, error) {
@@ -49,7 +59,66 @@ func (s *Service) getMyLots(ctx context.Context, sellerID uuid.UUID) ([]Lot, err
 	return lots, nil
 }
 
+func sanitizePhotoUUIDs(desc *Description) {
+	if desc == nil {
+		return
+	}
+	raw := desc.GetImages()
+	if len(raw) == 0 {
+		desc.Images = nil
+		desc.PhotoURL = nil
+		return
+	}
+	var arrImages [10]string
+	var arrPhotos [10]string
+	count := 0
+	for _, p := range raw {
+		if u, ok := ExtractUUID(p); ok {
+			if count < 10 {
+				arrImages[count] = u
+				arrPhotos[count] = fmt.Sprintf("%s/%s", PublicPhotosBucket, u)
+				count++
+			}
+		}
+	}
+	if count > 0 {
+		desc.Images = &arrImages
+		desc.PhotoURL = &arrPhotos
+	} else {
+		desc.Images = nil
+		desc.PhotoURL = nil
+	}
+}
+
+func (s *Service) markPhotosAttached(ctx context.Context, desc Description) {
+	if s.valkey == nil || s.valkey.Raw() == nil {
+		return
+	}
+	photos := desc.GetImages()
+	if len(photos) == 0 {
+		return
+	}
+	var members []any
+	for _, p := range photos {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if idx := strings.LastIndex(p, "/"); idx != -1 {
+			p = p[idx+1:]
+		}
+		p = strings.TrimSpace(p)
+		if p != "" {
+			members = append(members, p)
+		}
+	}
+	if len(members) > 0 {
+		_ = s.valkey.Raw().ZRem(ctx, "photos:unattached", members...).Err()
+	}
+}
+
 func (s *Service) createLot(ctx context.Context, sellerID uuid.UUID, req reqNewLot) (Lot, error) {
+	sanitizePhotoUUIDs(&req.Description)
 	lot, err := s.repo.create(
 		ctx,
 		sellerID,
@@ -65,6 +134,7 @@ func (s *Service) createLot(ctx context.Context, sellerID uuid.UUID, req reqNewL
 	if err != nil {
 		return Lot{}, fmt.Errorf("lotService.createLot: %w", err)
 	}
+	s.markPhotosAttached(ctx, req.Description)
 	return lot, nil
 }
 
@@ -72,6 +142,7 @@ func (s *Service) updateLot(ctx context.Context, id int64, sellerID uuid.UUID, r
 	if id <= 0 {
 		return Lot{}, fmt.Errorf("lotService.updateLot: %w", ErrInvalidID)
 	}
+	sanitizePhotoUUIDs(&req.Description)
 	lot, err := s.repo.updateFromSeller(
 		ctx,
 		id,
@@ -88,6 +159,7 @@ func (s *Service) updateLot(ctx context.Context, id int64, sellerID uuid.UUID, r
 	if err != nil {
 		return Lot{}, fmt.Errorf("lotService.updateLot: %w", err)
 	}
+	s.markPhotosAttached(ctx, req.Description)
 	return lot, nil
 }
 
@@ -122,73 +194,115 @@ func (s *Service) approve(ctx context.Context, id int64) error {
 	return nil
 }
 
-/*
-АНАЛИЗ SQL-КОДА И 3 ПРИМЕРА ВЫПОЛНЕНИЯ:
+func (s *Service) uploadPhoto(ctx context.Context, uid uuid.UUID, r io.Reader, filename string, size int64) (string, string, string, error) {
+	if size > mimeType.MaxPhotoSize {
+		return "", "", "", mimeType.ErrFileSizeExceeded
+	}
 
-================================================================================
-Пример 1. Первая ставка на лот (ставок еще нет, isFirst == true, storage.ErrNotFound)
-Лот id=1, start_amount=1000, min_step=100.
-Пользователь uid='0192e4a1-0001-7000-8000-000000000001' ставит amount=1000.
+	// Защита от спама и перегрузки: лимит на загрузку фотографий (не более 30 фото в час на пользователя)
+	if s.valkey != nil && s.valkey.Raw() != nil && uid != uuid.Nil() {
+		limitKey := fmt.Sprintf("ratelimit:photos:upload:%s", uid.String())
+		count, err := s.valkey.Raw().Incr(ctx, limitKey).Result()
+		if err == nil {
+			if count == 1 {
+				_ = s.valkey.Raw().Expire(ctx, limitKey, time.Hour).Err()
+			}
+			if count > 30 {
+				return "", "", "", ErrPhotoUploadLimitReached
+			}
+		}
+	}
 
- 1. Начало транзакции:
-    BEGIN;
+	fileBytes, err := io.ReadAll(io.LimitReader(r, mimeType.MaxPhotoSize+1))
+	if err != nil {
+		return "", "", "", fmt.Errorf("lotService.uploadPhoto: read file: %w", err)
+	}
+	if int64(len(fileBytes)) > mimeType.MaxPhotoSize {
+		return "", "", "", mimeType.ErrFileSizeExceeded
+	}
 
- 2. Блокировка лота по ID:
-    SELECT * FROM lots WHERE id = 1 AND status = 'active' FOR UPDATE;
+	mtype, err := mimeType.ValidatePhoto(bytes.NewReader(fileBytes), filename, int64(len(fileBytes)))
+	if err != nil {
+		return "", "", "", fmt.Errorf("lotService.uploadPhoto.ValidatePhoto: %w", err)
+	}
 
- 3. Запрос последней ставки (возвращает 0 строк -> storage.ErrNotFound):
-    SELECT * FROM bids WHERE lot_id = 1 ORDER BY id desc LIMIT 1;
+	// Хеш SHA-256 для дедупликации в таблице s3
+	sum := sha256.Sum256(fileBytes)
+	hash := hex.EncodeToString(sum[:])
 
- 4. Блокировка и получение данных пользователя:
-    SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at
-    FROM users WHERE id = '0192e4a1-0001-7000-8000-000000000001' AND deleted_at IS NULL FOR UPDATE;
+	// Регистрируем в таблице s3
+	s3ID, isInserted, err := s.repo.insertS3Hash(ctx, hash)
+	if err != nil {
+		return "", "", "", fmt.Errorf("lotService.uploadPhoto.insertS3Hash: %w", err)
+	}
 
- 5. Вставка новой ставки:
-    INSERT INTO bids (lot_id, user_id, amount) VALUES (1, '0192e4a1-0001-7000-8000-000000000001', 1000);
+	// Если файла с таким хешем еще нет, загружаем в photosS3 чисто по UUID без префиксов
+	if isInserted && s.photosS3 != nil {
+		contentType := mtype.String()
+		if contentType == "" {
+			contentType = "image/jpeg"
+		}
+		if err = s.photosS3.Upload(ctx, s3ID.String(), bytes.NewReader(fileBytes), contentType); err != nil {
+			return "", "", "", fmt.Errorf("lotService.uploadPhoto.s3Upload: %w", err)
+		}
+	}
 
- 6. Заморозка средств (hold += 1000):
-    UPDATE users SET hold = hold + 1000 WHERE id = '0192e4a1-0001-7000-8000-000000000001' AND deleted_at IS NULL;
+	// Отслеживаем загруженную фотографию в Redis ZSet, пока она не прикреплена к лоту
+	if s.valkey != nil && s.valkey.Raw() != nil {
+		_ = s.valkey.Raw().ZAdd(ctx, "photos:unattached", redis.Z{
+			Score:  float64(time.Now().UTC().Unix()),
+			Member: s3ID.String(),
+		}).Err()
+	}
 
- 7. Фиксация транзакции:
-    COMMIT;
+	directURL := s.getDirectPhotoURL(s3ID.String())
+	photoURL := directURL
+	if photoURL == "" {
+		photoURL = "/api/lot/photo/" + s3ID.String()
+	}
 
-================================================================================
-Пример 2. Перебитие ставки другим пользователем (isFirst == false, защита от deadlock)
-Текущая ставка: 1000 от '0192e4a1-0001-7000-8000-000000000001'.
-Новый участник uid='0192e4a1-0002-7000-8000-000000000002' ставит amount=1200.
+	return photoURL, s3ID.String(), directURL, nil
+}
 
- 1. Начало транзакции:
-    BEGIN;
+// GetPhotoPrefix возвращает базовый публичный префикс (URL) для получения фотографий по UUID.
+func (s *Service) GetPhotoPrefix() string {
+	return PublicPhotosBucket
+}
 
- 2. Блокировка лота:
-    SELECT * FROM lots WHERE id = 1 AND status = 'active' FOR UPDATE;
+// getDirectPhotoURL формирует прямой публичный URL к объекту в S3 хранилище photosS3.
+func (s *Service) getDirectPhotoURL(key string) string {
+	if key == "" {
+		return ""
+	}
+	if u, ok := ExtractUUID(key); ok {
+		key = u
+	}
+	return fmt.Sprintf("%s/%s", PublicPhotosBucket, key)
+}
 
- 3. Получение последней ставки (находит ставку на 1000 от пользователя 1):
-    SELECT * FROM bids WHERE lot_id = 1 ORDER BY id desc LIMIT 1;
+func (s *Service) getPhoto(ctx context.Context, idStr string) (io.ReadCloser, string, string, error) {
+	key := strings.TrimPrefix(idStr, "/api/lot/photo/")
+	if idx := strings.LastIndex(key, "/"); idx != -1 {
+		key = key[idx+1:]
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, "", "", storageS3.ErrNotFound
+	}
 
- 4. Упорядочивание firstUID и secondUID (по bytes.Compare) для предотвращения deadlock:
-    firstUID = '0192e4a1-0001-7000-8000-000000000001', secondUID = '0192e4a1-0002-7000-8000-000000000002'
+	directURL := s.getDirectPhotoURL(key)
 
- 5. Блокировка первого пользователя по порядку:
-    SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at
-    FROM users WHERE id = '0192e4a1-0001-7000-8000-000000000001' AND deleted_at IS NULL FOR UPDATE;
+	if s.photosS3 == nil {
+		return nil, "", directURL, storageS3.ErrNotFound
+	}
 
- 6. Блокировка второго пользователя по порядку:
-    SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at
-    FROM users WHERE id = '0192e4a1-0002-7000-8000-000000000002' AND deleted_at IS NULL FOR UPDATE;
+	rc, err := s.photosS3.Download(ctx, key)
+	if err != nil {
+		return nil, "", directURL, err
+	}
+	return rc, "", directURL, nil
+}
 
- 7. Создание новой ставки:
-    INSERT INTO bids (lot_id, user_id, amount) VALUES (1, '0192e4a1-0002-7000-8000-000000000002', 1200);
-
- 8. Увеличение hold у нового лидера (+1200):
-    UPDATE users SET hold = hold + 1200 WHERE id = '0192e4a1-0002-7000-8000-000000000002' AND deleted_at IS NULL;
-
- 9. Разморозка hold у предыдущего лидера (-1000):
-    UPDATE users SET hold = hold + -1000 WHERE id = '0192e4a1-0001-7000-8000-000000000001' AND deleted_at IS NULL;
-
- 10. Фиксация транзакции:
-    COMMIT;
-*/
 func (s *Service) bid(ctx context.Context, idLot int64, uid uuid.UUID, amount int) error {
 	// Первоначальная проверка и начало транзакции
 	if amount <= 0 {
@@ -268,12 +382,12 @@ func (s *Service) bid(ctx context.Context, idLot int64, uid uuid.UUID, amount in
 		return fmt.Errorf("lotService.bid: %w", err)
 	}
 	if err = txRepo.changeHold(ctx, currentUser.ID, amount); err != nil {
-		return fmt.Errorf("lotService.bid: %w", err)
+		return fmt.Errorf("lotService.changeHold: %w", err)
 	}
 
 	if !isFirst {
 		if err = txRepo.changeHold(ctx, bid.UserId, -bid.Amount); err != nil {
-			return fmt.Errorf("lotService.bid: %w", err)
+			return fmt.Errorf("lotService.changeHold: %w", err)
 		}
 	}
 

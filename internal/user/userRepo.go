@@ -2,10 +2,12 @@ package user
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/storage"
+	"github.com/jackc/pgx/v5"
 )
 
 type Repo struct {
@@ -14,6 +16,10 @@ type Repo struct {
 
 func NewRepo(db storage.DBTX) *Repo {
 	return &Repo{db: db}
+}
+
+func (r *Repo) WithTx(tx storage.DBTX) *Repo {
+	return &Repo{db: tx}
 }
 
 func (r *Repo) login(ctx context.Context, email string) (uuid.UUID, string, string, error) {
@@ -105,12 +111,13 @@ func (r *Repo) updateAvatar(ctx context.Context, uid uuid.UUID, avatarID uuid.UU
 }
 
 func (r *Repo) checkUserByEmail(ctx context.Context, email string) (bool, error) {
-	res, err := r.db.Exec(ctx, "SELECT 1 FROM users WHERE email = $1 AND deleted_at IS NULL", email)
+	var exists int
+	err := r.db.QueryRow(ctx, "SELECT 1 FROM users WHERE email = $1 AND deleted_at IS NULL", email).Scan(&exists)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
 		return false, fmt.Errorf("userRepo.getUserByEmail: %w", storage.ErrRepo(err))
-	}
-	if res.RowsAffected() == 0 {
-		return false, fmt.Errorf("userRepo.getUserByEmail: %w", storage.ErrNotFound)
 	}
 	return true, nil
 }
@@ -126,13 +133,48 @@ func (r *Repo) setAdmin(ctx context.Context, uid uuid.UUID) error {
 	return nil
 }
 
-func (r *Repo) changeBalance(ctx context.Context, uid uuid.UUID, changeBalance int) error {
-	res, err := r.db.Exec(ctx, "UPDATE users SET balance = balance + $1 WHERE id = $2 AND deleted_at IS NULL", changeBalance, uid)
-	if err != nil {
-		return fmt.Errorf("userRepo.changeBalance: %w", storage.ErrRepo(err))
+func (r *Repo) changeBalance(ctx context.Context, uid uuid.UUID, changeBalance int) (int, error) {
+	var newBalance int
+	row := r.db.QueryRow(ctx, "UPDATE users SET balance = balance + $1 WHERE id = $2 AND deleted_at IS NULL RETURNING balance", changeBalance, uid)
+	if err := row.Scan(&newBalance); err != nil {
+		return 0, fmt.Errorf("userRepo.changeBalance: %w", storage.ErrRepo(err))
 	}
-	if res.RowsAffected() == 0 {
-		return fmt.Errorf("userRepo.changeBalance: %w", storage.ErrNotFound)
+	return newBalance, nil
+}
+
+func (r *Repo) createLedgerEntry(ctx context.Context, uid uuid.UUID, amount, balanceAfter int, entryType string, lotID *int64) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO ledger_entries (user_id, amount, balance_after, type, lot_id)
+		VALUES ($1, $2, $3, $4, $5)`,
+		uid, amount, balanceAfter, entryType, lotID)
+	if err != nil {
+		return fmt.Errorf("userRepo.createLedgerEntry: %w", storage.ErrRepo(err))
 	}
 	return nil
+}
+
+func (r *Repo) getLedgerEntries(ctx context.Context, uid uuid.UUID) ([]LedgerEntry, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, user_id, amount, balance_after, type, lot_id, created_at
+		FROM ledger_entries
+		WHERE user_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT 100`, uid)
+	if err != nil {
+		return nil, fmt.Errorf("userRepo.getLedgerEntries: %w", storage.ErrRepo(err))
+	}
+	defer rows.Close()
+
+	var entries []LedgerEntry
+	for rows.Next() {
+		var entry LedgerEntry
+		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.Amount, &entry.BalanceAfter, &entry.Type, &entry.LotID, &entry.CreatedAt); err != nil {
+			return nil, fmt.Errorf("userRepo.getLedgerEntries.scan: %w", storage.ErrRepo(err))
+		}
+		entries = append(entries, entry)
+	}
+	if entries == nil {
+		entries = []LedgerEntry{}
+	}
+	return entries, nil
 }

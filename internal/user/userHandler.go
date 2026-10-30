@@ -484,16 +484,17 @@ func (h *Handler) updateAvatar(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// freeCoin пополняет баланс пользователя бесплатными монетами.
+// freeCoin пополняет баланс пользователя бесплатными монетами (раз в день, сброс в 00:00 UTC).
 //
 // @Summary Получить бесплатные монеты
-// @Description Начисляет 1000 бесплатных монет на баланс авторизованного пользователя
+// @Description Начисляет 1000 бесплатных монет на баланс авторизованного пользователя не чаще одного раза в день (сброс в 00:00 UTC)
 // @Tags user
 // @Security BearerAuth
 // @Param Idempotency-Key header string false "Ключ идемпотентности"
 // @Produce json
 // @Success 200 {object} httpx.Response{data=User} "Баланс успешно пополнен"
 // @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 429 {object} httpx.Response "Лимит исчерпан: бонус доступен только раз в день"
 // @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
 // @Router /api/user/me/freeCoin [get]
 func (h *Handler) freeCoin(w http.ResponseWriter, r *http.Request) {
@@ -503,15 +504,14 @@ func (h *Handler) freeCoin(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
 		return
 	}
-	if err = h.service.changeBalance(r.Context(), uid, 1000); err != nil {
-		apperr.Log(r.Context(), "freeCoin.changeBalance", err)
-		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
-		return
-	}
 
-	user, err := h.service.getUser(r.Context(), uid)
+	user, err := h.service.claimFreeCoin(r.Context(), uid)
 	if err != nil {
-		apperr.Log(r.Context(), "freeCoin.getUser", err)
+		if errors.Is(err, ErrFreeCoinLimitReached) {
+			httpx.WriteResponse(w, httpx.ErrRespFreeCoinLimit)
+			return
+		}
+		apperr.Log(r.Context(), "freeCoin.claimFreeCoin", err)
 		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
 	}
@@ -520,6 +520,35 @@ func (h *Handler) freeCoin(w http.ResponseWriter, r *http.Request) {
 }
 
 // RoutesUser /api/user
+// getTransactions возвращает историю финансовых операций и изменений баланса текущего пользователя.
+//
+// @Summary Получить историю транзакций
+// @Description Возвращает записи из ledger_entries для авторизованного пользователя
+// @Tags user
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} httpx.Response{data=[]LedgerEntry} "Список операций"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/user/transactions [get]
+func (h *Handler) getTransactions(w http.ResponseWriter, r *http.Request) {
+	uid, err := cfg.GetUID(r.Context())
+	if err != nil {
+		apperr.Log(r.Context(), "getTransactions.GetUID", err)
+		httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
+		return
+	}
+
+	entries, err := h.service.getTransactions(r.Context(), uid)
+	if err != nil {
+		apperr.Log(r.Context(), "getTransactions.service", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+		return
+	}
+
+	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK, Data: entries})
+}
+
 func (h *Handler) RoutesUser(authChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /me", h.getUser)
@@ -527,6 +556,7 @@ func (h *Handler) RoutesUser(authChain alice.Chain) http.Handler {
 	mux.HandleFunc("DELETE /me", h.deleteUser)
 	mux.HandleFunc("PUT /me/avatar", h.updateAvatar)
 	mux.HandleFunc("GET /me/freeCoin", h.freeCoin)
+	mux.HandleFunc("GET /transactions", h.getTransactions)
 
 	return authChain.Then(mux)
 }

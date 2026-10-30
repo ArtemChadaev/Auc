@@ -18,6 +18,7 @@ import {
 import type { User, UserSession } from '~/api/types';
 import { formatCoins } from '~/lib/money';
 import { updateUserName, uploadAvatar, getSessions, deleteCurrentUser } from '~/api/auth';
+import { resolveAvatarUrl } from '~/api/real/auth';
 import { useAuth } from '~/hooks/useAuth';
 import { ErrorAlert } from '~/components/feedback/ErrorAlert';
 
@@ -32,6 +33,7 @@ export function BalanceCard({ user, onClaimDaily, onLogout }: BalanceCardProps) 
 
   const [claiming, setClaiming] = useState(false);
   const [claimed, setClaimed] = useState(false);
+  const [claimMessage, setClaimMessage] = useState<{ text: string; isError: boolean } | null>(null);
 
   // Смена имени
   const [isEditingName, setIsEditingName] = useState(false);
@@ -57,6 +59,8 @@ export function BalanceCard({ user, onClaimDaily, onLogout }: BalanceCardProps) 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [avatarImgFailed, setAvatarImgFailed] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   // Сессии
   const [showSessionsModal, setShowSessionsModal] = useState(false);
@@ -69,10 +73,19 @@ export function BalanceCard({ user, onClaimDaily, onLogout }: BalanceCardProps) 
 
   const handleClaim = async () => {
     setClaiming(true);
+    setClaimMessage(null);
     try {
       await onClaimDaily();
       setClaimed(true);
-      setTimeout(() => setClaimed(false), 3000);
+      setClaimMessage({ text: '+1 000 🪙 успешно начислено на ваш баланс!', isError: false });
+      setTimeout(() => {
+        setClaimed(false);
+        setClaimMessage(null);
+      }, 5000);
+    } catch (err: any) {
+      const msg = err?.message || 'Не удалось получить бесплатные монеты';
+      setClaimMessage({ text: msg, isError: true });
+      setTimeout(() => setClaimMessage(null), 7000);
     } finally {
       setClaiming(false);
     }
@@ -105,6 +118,7 @@ export function BalanceCard({ user, onClaimDaily, onLogout }: BalanceCardProps) 
     }
     setUploadingAvatar(true);
     setAvatarError(null);
+    setAvatarImgFailed(false);
     try {
       await uploadAvatar(file);
       await refreshUser();
@@ -142,6 +156,7 @@ export function BalanceCard({ user, onClaimDaily, onLogout }: BalanceCardProps) 
   };
 
   const available = user.balance - user.hold;
+  const resolvedAvatar = resolveAvatarUrl(user.avatar_id);
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs space-y-4">
@@ -152,10 +167,11 @@ export function BalanceCard({ user, onClaimDaily, onLogout }: BalanceCardProps) 
         <div className="flex items-center gap-3.5">
           {/* Аватарка с кнопкой загрузки */}
           <div className="relative group shrink-0">
-            {user.avatar_id ? (
+            {resolvedAvatar && !avatarImgFailed ? (
               <img
-                src={user.avatar_id}
+                src={resolvedAvatar}
                 alt={user.name}
+                onError={() => setAvatarImgFailed(true)}
                 className="w-13 h-13 rounded-2xl object-cover shadow-xs border border-slate-200"
               />
             ) : (
@@ -277,7 +293,7 @@ export function BalanceCard({ user, onClaimDaily, onLogout }: BalanceCardProps) 
 
           <button
             type="button"
-            onClick={onLogout}
+            onClick={() => setShowLogoutModal(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 rounded-xl transition-colors font-medium cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
@@ -335,31 +351,92 @@ export function BalanceCard({ user, onClaimDaily, onLogout }: BalanceCardProps) 
       </div>
 
       {/* Ежедневный бонус */}
-      <div className="pt-2 flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-xs text-slate-500">
-          <Sparkles className="w-4 h-4 text-amber-500" />
-          <span>Бесплатные монеты (freeCoin): <strong>+1 000 🪙</strong></span>
+      <div className="pt-2 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-xs text-slate-500">
+            <Sparkles className="w-4 h-4 text-amber-500" />
+            <span>Бесплатные монеты (freeCoin): <strong>+1 000 🪙</strong></span>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleClaim}
+            disabled={claiming}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-98 text-white text-xs font-bold rounded-xl shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+          >
+            {claimed ? (
+              <>
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Получено!</span>
+              </>
+            ) : (
+              <>
+                <Coins className="w-3.5 h-3.5" />
+                <span>{claiming ? 'Начисление...' : 'Получить +1 000 🪙'}</span>
+              </>
+            )}
+          </button>
         </div>
 
-        <button
-          type="button"
-          onClick={handleClaim}
-          disabled={claiming}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-98 text-white text-xs font-bold rounded-xl shadow-xs transition-all disabled:opacity-50 cursor-pointer"
-        >
-          {claimed ? (
-            <>
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Получено!</span>
-            </>
-          ) : (
-            <>
-              <Coins className="w-3.5 h-3.5" />
-              <span>{claiming ? 'Начисление...' : 'Получить +1 000 🪙'}</span>
-            </>
-          )}
-        </button>
+        {claimMessage && (
+          <div
+            className={`p-2.5 rounded-xl text-xs flex items-center gap-2 transition-all ${
+              claimMessage.isError
+                ? 'bg-amber-50 border border-amber-200 text-amber-900'
+                : 'bg-emerald-50 border border-emerald-200 text-emerald-900'
+            }`}
+          >
+            {claimMessage.isError ? (
+              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+            )}
+            <span className="font-medium">{claimMessage.text}</span>
+          </div>
+        )}
       </div>
+
+      {/* Модальное окно подтверждения выхода */}
+      {showLogoutModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 w-full max-w-sm shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center gap-3 text-slate-800">
+              <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center shrink-0 text-slate-600">
+                <LogOut className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm sm:text-base text-slate-900">Выход из аккаунта</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Предотвращение случайного нажатия</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Вы уверены, что хотите выйти из профиля <strong>{user.name}</strong>?
+            </p>
+
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowLogoutModal(false)}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLogoutModal(false);
+                  onLogout();
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Да, выйти</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Модальное окно активных сессий */}
       {showSessionsModal && (

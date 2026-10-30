@@ -155,15 +155,7 @@ class MockDatabase {
     user.balance += bonus;
     this.users.set(user.id, user);
 
-    this.ledger.unshift({
-      id: Date.now(),
-      user_id: user.id,
-      amount: bonus,
-      balance_after: user.balance,
-      type: 'top_up',
-      lot_id: null,
-      created_at: new Date().toISOString(),
-    });
+    // Ledger only updated via server refresh
 
     return { user: { ...user }, added: true };
   }

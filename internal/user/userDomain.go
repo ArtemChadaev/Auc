@@ -37,3 +37,13 @@ type tokenResponds struct {
 	RefreshToken string  `json:"-"`
 	Session      Session `json:"refresh_session"`
 }
+
+type LedgerEntry struct {
+	ID           int64     `db:"id" json:"id"`
+	UserID       uuid.UUID `db:"user_id" json:"user_id"`
+	Amount       int       `db:"amount" json:"amount"`
+	BalanceAfter int       `db:"balance_after" json:"balance_after"`
+	Type         string    `db:"type" json:"type"`
+	LotID        *int64    `db:"lot_id" json:"lot_id,omitempty"`
+	CreatedAt    time.Time `db:"created_at" json:"created_at"`
+}

@@ -20,6 +20,8 @@ export function Header() {
   const location = useLocation();
 
   const [balancePopoverOpen, setBalancePopoverOpen] = useState(false);
+  const [headerClaimMsg, setHeaderClaimMsg] = useState<{ text: string; isError: boolean } | null>(null);
+  const [headerClaiming, setHeaderClaiming] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 
   const isLive = status.state === 'connected';
@@ -34,6 +36,21 @@ export function Header() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const handleHeaderClaim = async () => {
+    setHeaderClaiming(true);
+    setHeaderClaimMsg(null);
+    try {
+      await claimDailyCoins();
+      setHeaderClaimMsg({ text: '+1 000 🪙 начислено!', isError: false });
+      setTimeout(() => setHeaderClaimMsg(null), 3000);
+    } catch (err: any) {
+      setHeaderClaimMsg({ text: err?.message || 'Бонус доступен 1 раз в сутки', isError: true });
+      setTimeout(() => setHeaderClaimMsg(null), 5000);
+    } finally {
+      setHeaderClaiming(false);
+    }
+  };
 
   const available = user ? user.balance - user.hold : 0;
 
@@ -106,7 +123,7 @@ export function Header() {
                 {/* Отображение Hold прямо в плашке */}
                 {user.hold > 0 && (
                   <span className="flex items-center gap-0.5 pl-1 ml-1 border-l border-amber-300 text-[11px] text-amber-800 font-semibold">
-                    <ShieldAlert className="w-3 h-3 text-amber-700" />
+                    <ShieldAlert className="w-3.5 h-3.5 text-amber-700" />
                     <span>{formatCoins(user.hold)}</span>
                   </span>
                 )}
@@ -120,14 +137,27 @@ export function Header() {
                   <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                     <span className="font-bold text-slate-900 text-sm">Финансы Coins</span>
                     <button
-                      onClick={() => claimDailyCoins()}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-teal-50 text-teal-800 font-bold hover:bg-teal-100 transition-colors text-[11px]"
+                      onClick={handleHeaderClaim}
+                      disabled={headerClaiming}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-teal-50 text-teal-800 font-bold hover:bg-teal-100 transition-colors text-[11px] disabled:opacity-50 cursor-pointer"
                       title="Забрать ежедневные монеты"
                     >
                       <Sparkles className="w-3 h-3 text-amber-500" />
-                      <span>+1 000 🪙</span>
+                      <span>{headerClaiming ? '...' : '+1 000 🪙'}</span>
                     </button>
                   </div>
+
+                  {headerClaimMsg && (
+                    <div
+                      className={`p-2 rounded-xl text-[11px] leading-tight font-medium flex items-center gap-1.5 ${
+                        headerClaimMsg.isError
+                          ? 'bg-amber-50 border border-amber-200 text-amber-900'
+                          : 'bg-emerald-50 border border-emerald-200 text-emerald-900'
+                      }`}
+                    >
+                      <span>{headerClaimMsg.text}</span>
+                    </div>
+                  )}
 
                   <div className="space-y-2">
                     <div className="flex justify-between items-center py-1">
@@ -166,9 +196,17 @@ export function Header() {
               to="/profile"
               className="flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-xl hover:bg-slate-100 transition-colors"
             >
-              <div className="w-7 h-7 rounded-full bg-teal-700 text-white text-xs font-bold flex items-center justify-center">
-                {user.name.charAt(0).toUpperCase()}
-              </div>
+              {user.avatar_id ? (
+                <img
+                  src={user.avatar_id}
+                  alt={user.name}
+                  className="w-7 h-7 rounded-full object-cover border border-slate-200"
+                />
+              ) : (
+                <div className="w-7 h-7 rounded-full bg-teal-700 text-white text-xs font-bold flex items-center justify-center">
+                  {user.name.charAt(0).toUpperCase()}
+                </div>
+              )}
               <span className="hidden md:inline text-xs font-medium text-slate-700 max-w-28 truncate">
                 {user.name}
               </span>

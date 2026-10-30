@@ -15,14 +15,31 @@ export interface AuthContextType {
   claimDailyCoins: () => Promise<any>;
   getFreeCoin: () => Promise<User>;
   isAuthenticated: boolean;
+  isDailyClaimed: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
+
+function getTodayString(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dailyClaimed, setDailyClaimed] = useState(false);
+
+  // Проверка статуса ежедневного бонуса для текущего пользователя
+  useEffect(() => {
+    if (user?.id && typeof window !== 'undefined') {
+      const today = getTodayString();
+      const claimed = localStorage.getItem(`auc_daily_claimed_${user.id}_${today}`);
+      setDailyClaimed(claimed === 'true');
+    } else {
+      setDailyClaimed(false);
+    }
+  }, [user?.id]);
 
   const refreshUser = useCallback(async () => {
     const token = getStoredToken();
@@ -96,15 +113,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await apiLogout();
     } finally {
       setUser(null);
+      setDailyClaimed(false);
       setLoading(false);
     }
   }, []);
 
   const claimDailyCoins = useCallback(async () => {
-    const updatedUser = await getFreeCoin();
-    setUser(updatedUser);
-    return { user: updatedUser, added: true };
-  }, []);
+    try {
+      const updatedUser = await getFreeCoin();
+      setUser(updatedUser);
+      setDailyClaimed(true);
+      if (updatedUser?.id && typeof window !== 'undefined') {
+        const today = getTodayString();
+        localStorage.setItem(`auc_daily_claimed_${updatedUser.id}_${today}`, 'true');
+      }
+      return { user: updatedUser, added: true };
+    } catch (err: any) {
+      const errMsg = (err?.message || '').toLowerCase();
+      if (
+        err?.status === 429 ||
+        errMsg.includes('limit') ||
+        errMsg.includes('once per day') ||
+        errMsg.includes('лимит')
+      ) {
+        setDailyClaimed(true);
+        if (user?.id && typeof window !== 'undefined') {
+          const today = getTodayString();
+          localStorage.setItem(`auc_daily_claimed_${user.id}_${today}`, 'true');
+        }
+        throw new Error('Бесплатные монеты можно получить только один раз в день (сброс в 00:00 UTC)');
+      }
+      throw err;
+    }
+  }, [user]);
 
   const value = useMemo<AuthContextType>(
     () => ({
@@ -122,8 +163,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return u;
       },
       isAuthenticated: !!user,
+      isDailyClaimed: dailyClaimed,
     }),
-    [user, loading, error, login, register, logout, refreshUser, claimDailyCoins]
+    [user, loading, error, login, register, logout, refreshUser, claimDailyCoins, dailyClaimed]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

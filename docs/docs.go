@@ -975,6 +975,59 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/item/me": {
+                "get": {
+                        "security": [
+                                {
+                                        "BearerAuth": []
+                                }
+                        ],
+                        "description": "Возвращает список всех предметов, владельцем которых является текущий авторизованный пользователь",
+                        "produces": [
+                                "application/json"
+                        ],
+                        "tags": [
+                                "item"
+                        ],
+                        "summary": "Получить предметы текущего пользователя",
+                        "responses": {
+                                "200": {
+                                        "description": "OK",
+                                        "schema": {
+                                                "allOf": [
+                                                        {
+                                                                "$ref": "#/definitions/httpx.Response"
+                                                        },
+                                                        {
+                                                                "type": "object",
+                                                                "properties": {
+                                                                        "data": {
+                                                                                "type": "array",
+                                                                                "items": {
+                                                                                        "$ref": "#/definitions/item.Item"
+                                                                                }
+                                                                        }
+                                                                }
+                                                        }
+                                                ]
+                                        }
+                                },
+                                "401": {
+                                        "description": "Не авторизован",
+                                        "schema": {
+                                                "$ref": "#/definitions/httpx.Response"
+                                        }
+                                },
+                                "500": {
+                                        "description": "Внутренняя ошибка сервера",
+                                        "schema": {
+                                                "$ref": "#/definitions/httpx.Response"
+                                        }
+                                }
+                        }
+                }
+        }
+,
         "/api/lot/": {
             "get": {
                 "description": "Возвращает список лотов аукциона со статусами active и finished",

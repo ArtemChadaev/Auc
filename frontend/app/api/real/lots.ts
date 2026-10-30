@@ -1,5 +1,47 @@
 import { api, generateIdempotencyKey } from '~/api/client';
+import { resolveAvatarUrl, S3_PHOTOS_BASE } from '~/api/real/auth';
 import type { Lot, LotFilter, LotListResponse, CreateLotInput, ItemType } from '~/api/types';
+
+export { S3_PHOTOS_BASE };
+
+let cachedPhotoPrefix: string | null = null;
+
+/**
+ * GET /api/lot/photo/prefix
+ * Получает базовый URL префикс для скачивания фотографий по UUID
+ */
+export async function getPhotoPrefixReal(): Promise<string> {
+  if (cachedPhotoPrefix) return cachedPhotoPrefix;
+  try {
+    const res = await api.get<{ prefix: string }>('/api/lot/photo/prefix');
+    if (res?.prefix) {
+      cachedPhotoPrefix = res.prefix.replace(/\/$/, '');
+      return cachedPhotoPrefix;
+    }
+  } catch {
+    // fallback quietly к стандартному URL
+  }
+  return S3_PHOTOS_BASE;
+}
+
+export function setPhotoPrefix(prefix: string) {
+  cachedPhotoPrefix = prefix.replace(/\/$/, '');
+}
+
+if (typeof window !== 'undefined') {
+  getPhotoPrefixReal().catch(() => {});
+}
+
+export function resolvePhotoUrl(photo?: string | null): string {
+  if (!photo) return '/placeholder.svg';
+  if (photo.startsWith('http://') || photo.startsWith('https://') || photo.startsWith('data:')) {
+    return photo;
+  }
+  const cleanId = photo.replace(/^\/api\/lot\/photo\//, '').replace(/^.*\//, '').trim();
+  if (!cleanId) return '/placeholder.svg';
+  const base = cachedPhotoPrefix || S3_PHOTOS_BASE;
+  return `${base}/${cleanId}`;
+}
 
 function mapCategoryToItemType(category: string): ItemType {
   const cat = (category || '').toLowerCase();
@@ -24,20 +66,43 @@ function normalizeLot(raw: any): Lot {
   const rawDesc = raw.description || {};
   const descriptionType: ItemType = rawDesc.type || 'image';
 
+  // Извлекаем чистые UUID из images или photo
+  const rawList = Array.isArray(rawDesc.images) && rawDesc.images.length > 0
+    ? rawDesc.images
+    : Array.isArray(rawDesc.photo)
+    ? rawDesc.photo
+    : [];
+
+  const rawImages: string[] = rawList
+    .filter((p: any) => typeof p === 'string' && p.trim() !== '')
+    .map((p: string) => p.replace(/^\/api\/lot\/photo\//, '').replace(/^.*\//, '').trim())
+    .filter(Boolean);
+
+  const rawPhotos: string[] = rawImages.map((p: string) => resolvePhotoUrl(p));
+  const previewPhoto = rawPhotos[0] || resolvePhotoUrl(raw.item_summary?.preview) || '/placeholder.svg';
+
   return {
     id,
     seller_id: raw.seller_id || '',
-    seller: raw.seller || {
+    seller: raw.seller ? {
+      ...raw.seller,
+      avatar_id: resolveAvatarUrl(raw.seller.avatar_id),
+    } : {
       id: raw.seller_id || '',
       name: raw.seller?.name || 'Продавец',
-      avatar_id: raw.seller?.avatar_id || null,
+      avatar_id: resolveAvatarUrl(raw.seller?.avatar_id),
       rating: 5.0,
     },
     item_id: Number(raw.item_id ?? 0),
-    item_summary: raw.item_summary || {
+    item_summary: raw.item_summary ? {
+      ...raw.item_summary,
+      id: Number(raw.item_summary.id ?? raw.item_id ?? 0),
+      type: raw.item_summary.type || descriptionType,
+      preview: resolvePhotoUrl(raw.item_summary.preview) || previewPhoto,
+    } : {
       id: Number(raw.item_id ?? 0),
       type: descriptionType,
-      preview: rawDesc.photo?.[0] || '/placeholder.svg',
+      preview: previewPhoto,
     },
     status: raw.status || 'active',
     category: raw.category || descriptionType,
@@ -45,14 +110,19 @@ function normalizeLot(raw: any): Lot {
     description: {
       text: rawDesc.text || '',
       short_text: rawDesc.short_text || '',
-      media: rawDesc.photo?.map((p: string, idx: number) => ({
+      images: rawImages,
+      photo: rawPhotos,
+      media: rawPhotos.map((p: string, idx: number) => ({
         id: `photo-${idx}`,
         type: 'image' as const,
         order: idx + 1,
         caption: '',
-      })) || [],
+        url: p,
+      })),
       attributes: rawDesc.attributes || {},
       auto_activate: rawDesc.auto_activate ?? true,
+      reject_reason: rawDesc.reject_reason || undefined,
+      draft_ui: rawDesc.draft_ui || undefined,
     },
     start_amount: startAmount,
     current_bid: Number(raw.current_bid ?? (finishAmount || startAmount)),
@@ -64,6 +134,23 @@ function normalizeLot(raw: any): Lot {
     started_at: raw.started_at || null,
     ends_at: raw.ends_at || null,
     finished_at: raw.finished_at || null,
+  };
+}
+
+/**
+ * POST /api/lot/photo
+ * Загружает фотографию для лота в хранилище photos S3 и возвращает идентификатор (UUID) и прямую ссылку
+ */
+export async function uploadLotPhotoReal(file: File | Blob): Promise<{ url: string; id: string }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await api.post<{ url?: string; direct_url?: string; id?: string; uuid?: string }>('/api/lot/photo', formData);
+  const photoId = res.id || res.uuid || '';
+  const prefix = await getPhotoPrefixReal();
+  const direct = res.direct_url || (photoId ? `${prefix}/${photoId}` : res.url || '');
+  return {
+    id: photoId,
+    url: direct,
   };
 }
 
@@ -184,7 +271,6 @@ export async function getLotReal(id: number): Promise<Lot> {
       return LOTS_CACHE.get(numId)!;
     }
     // 2. Публичный GET /api/lot/{id} возвращает 404 для лотов со статусом draft и pending_review
-    // (в Go БД: WHERE status IN ('approved', 'active', 'finished', 'cancelled')).
     // Для продавца лот доступен через личный эндпоинт GET /api/lot/my
     if (err?.status === 404 || err?.message?.toLowerCase().includes('not found')) {
       try {
@@ -215,6 +301,12 @@ export async function createLotReal(input: CreateLotInput): Promise<Lot> {
   const startAmount = Math.max(100, Math.round(input.start_amount / 100) * 100);
   const minStep = Math.min(500, Math.max(50, Math.round(input.min_step / 50) * 50));
 
+  const rawList = input.images || input.photos || [];
+  const cleanUUIDs = rawList
+    .filter((p: any) => typeof p === 'string' && p.trim() !== '')
+    .map((p: string) => p.replace(/^\/api\/lot\/photo\//, '').replace(/^.*\//, '').trim())
+    .filter(Boolean);
+
   const body: any = {
     item_id: Number(input.item_id),
     title: input.title.trim(),
@@ -225,9 +317,11 @@ export async function createLotReal(input: CreateLotInput): Promise<Lot> {
       type: itemType,
       text: input.text?.trim() || input.title.trim(),
       short_text: input.short_text?.trim() || '',
-      photo: [],
+      images: cleanUUIDs,
+      photo: cleanUUIDs,
       tags: [],
       auto_activate: input.auto_activate ?? true,
+      draft_ui: input.draft_ui,
     },
   };
 
@@ -256,6 +350,12 @@ export async function updateLotReal(id: number, input: Partial<CreateLotInput>):
     ? Math.min(500, Math.max(50, Math.round(input.min_step / 50) * 50))
     : 50;
 
+  const rawList = input.images || input.photos || [];
+  const cleanUUIDs = rawList
+    .filter((p: any) => typeof p === 'string' && p.trim() !== '')
+    .map((p: string) => p.replace(/^\/api\/lot\/photo\//, '').replace(/^.*\//, '').trim())
+    .filter(Boolean);
+
   const body: any = {
     item_id: input.item_id ? Number(input.item_id) : undefined,
     title: input.title?.trim() || 'Лот',
@@ -266,9 +366,11 @@ export async function updateLotReal(id: number, input: Partial<CreateLotInput>):
       type: itemType,
       text: input.text?.trim() || input.title?.trim() || '',
       short_text: input.short_text?.trim() || '',
-      photo: [],
+      images: cleanUUIDs,
+      photo: cleanUUIDs,
       tags: [],
       auto_activate: input.auto_activate ?? true,
+      draft_ui: input.draft_ui,
     },
   };
 

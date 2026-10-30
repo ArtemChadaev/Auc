@@ -33,6 +33,10 @@ var (
 	ErrRespUserAlreadyUploading = Response{Code: http.StatusConflict, Error: "user already has an active upload"}
 	ErrRespFileExpired          = Response{Code: http.StatusGone, Error: "file has expired"}
 	ErrRespDownloadLimit        = Response{Code: http.StatusTooManyRequests, Error: "download limit reached: only 1 download per day allowed"}
+
+	// User Limits
+	ErrRespFreeCoinLimit    = Response{Code: http.StatusTooManyRequests, Error: "free coins limit reached: only once per day allowed"}
+	ErrRespPhotoUploadLimit = Response{Code: http.StatusTooManyRequests, Error: "photo upload limit reached: maximum 30 photos per hour allowed"}
 )
 
 // DecodeJSON декодирует и обрезает пробелы слева/справа. Сам отправляет ошибку клиенту

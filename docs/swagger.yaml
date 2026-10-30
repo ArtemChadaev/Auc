@@ -892,6 +892,36 @@ paths:
       summary: Передать предмет в подарок
       tags:
       - item
+  /api/item/me:
+    get:
+      description: Возвращает список всех предметов, владельцем которых является текущий авторизованный пользователь
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpx.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/item.Item'
+                  type: array
+              type: object
+        "401":
+          description: Не авторизован
+          schema:
+            $ref: '#/definitions/httpx.Response'
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            $ref: '#/definitions/httpx.Response'
+      security:
+      - BearerAuth: []
+      summary: Получить предметы текущего пользователя
+      tags:
+      - item
   /api/lot/:
     get:
       description: Возвращает список лотов аукциона со статусами active и finished

@@ -65,6 +65,7 @@ func AuthAdmin(next http.Handler) http.Handler {
 		}
 		if role != "admin" {
 			httpx.WriteResponse(w, httpx.ErrForbidden)
+			return
 		}
 
 		ctx := context.WithValue(r.Context(), cfg.UID, uid)

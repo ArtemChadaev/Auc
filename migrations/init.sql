@@ -71,6 +71,8 @@ create table lots (
 );
 
 create unique index ux_lot_item_active on lots (ends_at) WHERE status = 'active';
+create index idx_lots_status_created_at on lots (status, created_at);
+create index idx_lots_seller_status on lots (seller_id, status);
 
 -- amount на что изменился баланс
 -- balance_after баланс после изменения
@@ -132,4 +134,20 @@ CREATE TABLE user_consents (
 );
 
 create index ux_user_consents_user_id on user_consents (user_id);
+
+CREATE TABLE rate_limit_violations (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    identifier TEXT NOT NULL,
+    ip TEXT NOT NULL,
+    user_agent TEXT,
+    endpoint TEXT NOT NULL,
+    request_count INT NOT NULL,
+    limit_count INT NOT NULL,
+    violation_type TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_violations_identifier ON rate_limit_violations(identifier);
+CREATE INDEX idx_violations_created_at ON rate_limit_violations(created_at);
+
 commit;

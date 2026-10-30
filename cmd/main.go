@@ -68,7 +68,7 @@ func main() {
 		return
 	}
 
-	// s3 photos (user avatar)
+	// s3 photos (user avatar, lot photos)
 	photosS3, err := storageS3.NewClient(ctx, storageS3.Config{
 		Endpoint:  cfg.Cfg.Endpoint,
 		Region:    cfg.Cfg.Region,
@@ -92,13 +92,18 @@ func main() {
 	}
 	defer vk.Close()
 
+	// violation exporter (периодическая выгрузка нарушений из Redis в PostgreSQL и S3)
+	violationExporter := middleware.NewViolationExporter(vk, pool, globalS3, 10*time.Minute)
+	go violationExporter.Start(ctx)
+
 	// http
 	mux := http.NewServeMux()
-	globalChain := alice.New(middleware.Logger, middleware.MaxBodySize(5<<20), middleware.Idempotency(vk))
-	authChain := alice.New(middleware.AuthAccessToken)
-	adminChain := alice.New(middleware.AuthAdmin)
+	globalChain := alice.New(middleware.Logger, middleware.GlobalRateLimit(vk, 300, 100), middleware.MaxBodySize(5<<20))
+	authChain := alice.New(middleware.AuthAccessToken, middleware.Idempotency(vk))
+	adminChain := alice.New(middleware.AuthAdmin, middleware.Idempotency(vk))
+
 	// user
-	userService := user.NewService(user.NewRepo(pool), photosS3)
+	userService := user.NewService(user.NewRepo(pool), pool, photosS3, vk)
 	if err = userService.CreateAdmin(); err != nil {
 		slog.Error("main.user", "error", err)
 		return
@@ -119,8 +124,10 @@ func main() {
 	mux.Handle("/api/document/", http.StripPrefix("/api/document", docHandler.Routes(authChain)))
 
 	// lot
-	lotService := lot.NewService(lot.NewRepo(pool), pool)
+	lotService := lot.NewService(lot.NewRepo(pool), pool, photosS3, vk)
 	go lotService.FinishLots(ctx)
+	go lotService.ModerateLots(ctx)
+	go lotService.CleanExpiredLotPhotos(ctx)
 	lotHandler := lot.NewHandler(lotService)
 	mux.Handle("/api/lot/", http.StripPrefix("/api/lot", lotHandler.RouterLot(authChain, adminChain)))
 	mux.Handle("/api/bid/", http.StripPrefix("/api/bid", lotHandler.RouterBid(authChain)))

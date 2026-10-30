@@ -120,6 +120,7 @@ export type MediaType = 'image' | 'video' | '3d';
 export interface MediaItem {
   id: string; // uuid
   type: MediaType;
+  url?: string;
   blur_hash?: string;
   width?: number;
   height?: number;
@@ -133,8 +134,12 @@ export interface LotDescription {
   text: string;
   short_text?: string;
   media: MediaItem[];
+  photo?: string[];
+  images?: string[];
   attributes?: Record<string, string>;
   auto_activate?: boolean;
+  reject_reason?: string;
+  draft_ui?: string;
 }
 
 export interface SellerInfo {
@@ -152,7 +157,7 @@ export interface WinnerInfo {
 export interface ItemSummary {
   id: number;
   type: string;
-  preview: string; // uuid
+  preview: string; // uuid or url
   blur_hash?: string;
 }
 
@@ -260,6 +265,9 @@ export interface CreateLotInput {
   ends_at?: string;
   status?: 'draft' | 'pending_review';
   auto_activate?: boolean;
+  photos?: string[];
+  images?: string[];
+  draft_ui?: string;
 }
 
 export interface CreateItemInput {

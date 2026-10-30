@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router';
 import {
   Gavel,
@@ -14,10 +14,17 @@ import {
   Play,
   RotateCcw,
   CheckCircle2,
+  Upload,
+  X,
+  ImageIcon,
+  GripVertical,
+  Star,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useAuth } from '~/hooks/useAuth';
 import { listUserItems } from '~/api/items';
-import { createLot, getMyLots, updateLot, activateLot, getLot, cacheLot } from '~/api/lots';
+import { createLot, getMyLots, updateLot, activateLot, getLot, cacheLot, uploadLotPhoto, resolvePhotoUrl } from '~/api/lots';
 import type { Item, Lot } from '~/api/types';
 import { LotCard } from '~/components/lot/LotCard';
 import { ErrorAlert } from '~/components/feedback/ErrorAlert';
@@ -31,6 +38,8 @@ export const ITEM_TYPE_TO_CATEGORY: Record<string, string> = {
   document: 'Документы',
   archive: 'Архивы',
 };
+
+const DRAFT_STORAGE_KEY_PREFIX = 'auc_lot_draft_form_';
 
 type QuickDuration = 'hour' | 'day' | 'week';
 
@@ -94,6 +103,15 @@ export default function CreateLotPage() {
     : 'Цифровой Арт';
 
   const [title, setTitle] = useState('');
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Состояние Drag-and-Drop карточек фотографий
+  const [draggedPhotoIdx, setDraggedPhotoIdx] = useState<number | null>(null);
+  const [dragOverPhotoIdx, setDragOverPhotoIdx] = useState<number | null>(null);
+
   const [shortText, setShortText] = useState('');
   const [text, setText] = useState('');
   const [startAmount, setStartAmount] = useState(5000);
@@ -115,6 +133,16 @@ export default function CreateLotPage() {
   const [activateSuccess, setActivateSuccess] = useState<string | null>(null);
   const [error, setError] = useState<unknown | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  // Состояние автосохранения черновика
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
+  const [restoredFromLocal, setRestoredFromLocal] = useState(false);
+  const lastServerSaveTimeRef = useRef<number>(0);
+  const isDirtyRef = useRef(false);
+  const editingLotIdRef = useRef<number | null>(editingLotId);
+  editingLotIdRef.current = editingLotId;
+  const draftLoadedRef = useRef(false);
 
   // Загрузка предметов и лотов пользователя
   useEffect(() => {
@@ -166,11 +194,34 @@ export default function CreateLotPage() {
     setMinStep(lot.min_step || 250);
     setIsDraft(lot.status === 'draft');
     setAutoActivate(lot.description?.auto_activate ?? true);
+
+    const rawPhotos = lot.description?.images || lot.description?.photo || [];
+    const lotPhotos = Array.isArray(rawPhotos)
+      ? rawPhotos
+          .filter((p: any) => typeof p === 'string' && p.trim() !== '')
+          .map((p: string) => p.replace(/^\/api\/lot\/photo\//, '').replace(/^.*\//, '').trim())
+          .filter(Boolean)
+      : (lot.description?.media || [])
+          .map((m: any) => typeof m?.url === 'string' ? m.url.replace(/^\/api\/lot\/photo\//, '').replace(/^.*\//, '').trim() : '')
+          .filter(Boolean);
+    setPhotos(lotPhotos);
+
     if (lot.started_at) {
       setStartDateStr(toLocalISOString(new Date(lot.started_at)));
     }
     if (lot.ends_at) {
       setEndDateStr(toLocalISOString(new Date(lot.ends_at)));
+    }
+
+    if (lot.description?.draft_ui) {
+      try {
+        const ui = JSON.parse(lot.description.draft_ui);
+        if (ui.quickDuration) setQuickDuration(ui.quickDuration);
+        if (ui.autoActivate !== undefined) setAutoActivate(ui.autoActivate);
+        if (ui.isDraft !== undefined) setIsDraft(ui.isDraft);
+      } catch {
+        // ignore
+      }
     }
   };
 
@@ -178,7 +229,15 @@ export default function CreateLotPage() {
     setEditingLotId(null);
     setEditingLotStatus(null);
     setSearchParams({});
+    setRestoredFromLocal(false);
+    if (user?.id) {
+      try {
+        localStorage.removeItem(`${DRAFT_STORAGE_KEY_PREFIX}${user.id}`);
+      } catch {}
+    }
     setTitle('');
+    setPhotos([]);
+    setPhotoError(null);
     setShortText('');
     setText('');
     setStartAmount(5000);
@@ -193,6 +252,102 @@ export default function CreateLotPage() {
         setTitle(items[0].metadata.title as string);
       }
     }
+  };
+
+  const handlePhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    if (photos.length >= 10) {
+      setPhotoError('Максимальное количество фотографий для описания лота — 10');
+      return;
+    }
+
+    setUploadingPhoto(true);
+    setPhotoError(null);
+    try {
+      const remainingSlots = 10 - photos.length;
+      const filesToUpload = Array.from(files).slice(0, remainingSlots);
+
+      for (const file of filesToUpload) {
+        if (file.size > 5 * 1024 * 1024) {
+          throw new Error(`Файл "${file.name}" превышает допустимый размер 5 МБ`);
+        }
+        const res = await uploadLotPhoto(file);
+        const photoUUID = (res.id || '').replace(/^\/api\/lot\/photo\//, '').replace(/^.*\//, '').trim();
+        setPhotos((prev) => [...prev, photoUUID || res.url]);
+      }
+    } catch (err: unknown) {
+      setPhotoError(err instanceof Error ? err.message : 'Не удалось загрузить фотографию');
+    } finally {
+      setUploadingPhoto(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleRemovePhoto = (idxToRemove: number) => {
+    setPhotos((prev) => prev.filter((_, idx) => idx !== idxToRemove));
+  };
+
+  // Drag-and-drop перетаскивание карточек фотографий
+  const handlePhotoDragStart = (e: React.DragEvent, idx: number) => {
+    setDraggedPhotoIdx(idx);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(idx));
+  };
+
+  const handlePhotoDragOver = (e: React.DragEvent, idx: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverPhotoIdx !== idx) {
+      setDragOverPhotoIdx(idx);
+    }
+  };
+
+  const handlePhotoDrop = (e: React.DragEvent, targetIdx: number) => {
+    e.preventDefault();
+    if (draggedPhotoIdx === null || draggedPhotoIdx === targetIdx) {
+      setDraggedPhotoIdx(null);
+      setDragOverPhotoIdx(null);
+      return;
+    }
+    setPhotos((prev) => {
+      const updated = [...prev];
+      const [moved] = updated.splice(draggedPhotoIdx, 1);
+      updated.splice(targetIdx, 0, moved);
+      return updated;
+    });
+    setDraggedPhotoIdx(null);
+    setDragOverPhotoIdx(null);
+  };
+
+  const handlePhotoDragEnd = () => {
+    setDraggedPhotoIdx(null);
+    setDragOverPhotoIdx(null);
+  };
+
+  // Перемещение кнопками влево/вправо
+  const handleMovePhoto = (fromIdx: number, toIdx: number) => {
+    if (toIdx < 0 || toIdx >= photos.length) return;
+    setPhotos((prev) => {
+      const updated = [...prev];
+      const [moved] = updated.splice(fromIdx, 1);
+      updated.splice(toIdx, 0, moved);
+      return updated;
+    });
+  };
+
+  // Сделать фото обложкой (позиция №1)
+  const handleMakeCoverPhoto = (idx: number) => {
+    if (idx === 0) return;
+    setPhotos((prev) => {
+      const updated = [...prev];
+      const [moved] = updated.splice(idx, 1);
+      updated.unshift(moved);
+      return updated;
+    });
   };
 
   // При смене даты старта пересчитываем дату конца согласно выбранному радио
@@ -223,6 +378,213 @@ export default function CreateLotPage() {
       }
     }
   };
+
+  // Автоматическое сохранение черновика на сервер
+  const saveDraftToServer = useCallback(async () => {
+    if (!isAuthenticated || !selectedItemId) return;
+    const now = Date.now();
+    // Не чаще 1 раза в 5 секунд при переключении и автосохранении
+    if (now - lastServerSaveTimeRef.current < 5000) {
+      return;
+    }
+
+    setDraftSaving(true);
+    try {
+      const startIso = new Date(startDateStr).toISOString();
+      const endIso = new Date(endDateStr).toISOString();
+      const durationMin = Math.round(
+        (new Date(endDateStr).getTime() - new Date(startDateStr).getTime()) / 60000
+      );
+
+      const draftPayload = {
+        item_id: selectedItemId,
+        title: title.trim() || 'Черновик лота',
+        category,
+        short_text: shortText.trim(),
+        text: text.trim() || shortText.trim() || title.trim() || 'Черновик',
+        start_amount: Math.max(100, Math.round(startAmount / 100) * 100),
+        min_step: Math.min(500, Math.max(50, Math.round(minStep / 50) * 50)),
+        duration_minutes: durationMin > 0 ? durationMin : 1440,
+        started_at: startIso,
+        ends_at: endIso,
+        status: 'draft' as const,
+        auto_activate: autoActivate,
+        photos: photos,
+        images: photos,
+        draft_ui: JSON.stringify({
+          quickDuration,
+          autoActivate,
+          isDraft,
+        }),
+      };
+
+      if (editingLotIdRef.current) {
+        const updated = await updateLot(editingLotIdRef.current, draftPayload);
+        cacheLot(updated);
+      } else {
+        const created = await createLot(draftPayload);
+        cacheLot(created);
+        setEditingLotId(created.id);
+        editingLotIdRef.current = created.id;
+        setEditingLotStatus('draft');
+        if (typeof window !== 'undefined') {
+          const url = new URL(window.location.href);
+          url.searchParams.set('edit_id', String(created.id));
+          window.history.replaceState({}, '', url.toString());
+        }
+      }
+
+      lastServerSaveTimeRef.current = Date.now();
+      isDirtyRef.current = false;
+      setDraftSavedAt(new Date());
+    } catch (err) {
+      console.warn('Auto-save draft error:', err);
+    } finally {
+      setDraftSaving(false);
+    }
+  }, [
+    isAuthenticated,
+    selectedItemId,
+    title,
+    category,
+    shortText,
+    text,
+    startAmount,
+    minStep,
+    startDateStr,
+    endDateStr,
+    autoActivate,
+    photos,
+    quickDuration,
+    isDraft,
+  ]);
+
+  const saveDraftRef = useRef(saveDraftToServer);
+  saveDraftRef.current = saveDraftToServer;
+
+  // Восстановление черновика из localStorage при открытии без edit_id
+  useEffect(() => {
+    if (!isAuthenticated || !user || draftLoadedRef.current) return;
+    if (editIdParam) return;
+
+    try {
+      const raw = localStorage.getItem(`${DRAFT_STORAGE_KEY_PREFIX}${user.id}`);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved && typeof saved === 'object' && (saved.title || saved.selectedItemId)) {
+          if (saved.editingLotId) setEditingLotId(saved.editingLotId);
+          if (saved.editingLotStatus) setEditingLotStatus(saved.editingLotStatus);
+          if (saved.selectedItemId) setSelectedItemId(saved.selectedItemId);
+          if (saved.title !== undefined) setTitle(saved.title);
+          if (saved.shortText !== undefined) setShortText(saved.shortText);
+          if (saved.text !== undefined) setText(saved.text);
+          if (saved.startAmount) setStartAmount(saved.startAmount);
+          if (saved.minStep) setMinStep(saved.minStep);
+          if (saved.isDraft !== undefined) setIsDraft(saved.isDraft);
+          if (saved.autoActivate !== undefined) setAutoActivate(saved.autoActivate);
+          if (saved.quickDuration) setQuickDuration(saved.quickDuration);
+          if (saved.startDateStr) setStartDateStr(saved.startDateStr);
+          if (saved.endDateStr) setEndDateStr(saved.endDateStr);
+                    const rawSaved = saved.images || saved.photos;
+          if (Array.isArray(rawSaved)) {
+            setPhotos(
+              rawSaved
+                .filter((p: any) => typeof p === 'string' && p.trim() !== '')
+                .map((p: string) => p.replace(/^\/api\/lot\/photo\//, '').replace(/^.*\//, '').trim())
+                .filter(Boolean)
+            );
+          }
+          setRestoredFromLocal(true);
+        }
+      }
+    } catch {
+      // ignore
+    }
+    draftLoadedRef.current = true;
+  }, [isAuthenticated, user, editIdParam]);
+
+  // Сохранение в localStorage при каждом изменении (чтобы не пропадал при переключении URL)
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    if (!draftLoadedRef.current && !editIdParam) return;
+    isDirtyRef.current = true;
+    try {
+      const data = {
+        editingLotId,
+        editingLotStatus,
+        selectedItemId,
+        title,
+        shortText,
+        text,
+        startAmount,
+        minStep,
+        isDraft,
+        autoActivate,
+        quickDuration,
+        startDateStr,
+        endDateStr,
+        photos,
+        images: photos,
+        updatedAt: Date.now(),
+      };
+      localStorage.setItem(`${DRAFT_STORAGE_KEY_PREFIX}${user.id}`, JSON.stringify(data));
+    } catch {
+      // ignore storage quota
+    }
+  }, [
+    isAuthenticated,
+    user,
+    editingLotId,
+    editingLotStatus,
+    selectedItemId,
+    title,
+    shortText,
+    text,
+    startAmount,
+    minStep,
+    isDraft,
+    autoActivate,
+    quickDuration,
+    startDateStr,
+    endDateStr,
+    photos,
+    editIdParam,
+  ]);
+
+  // Автосохранение черновика на сервере: подождать 7 секунд после изменения
+  useEffect(() => {
+    if (!isAuthenticated || !selectedItemId) return;
+    if (!isDirtyRef.current) return;
+
+    const timer = setTimeout(() => {
+      saveDraftRef.current();
+    }, 7000);
+
+    return () => clearTimeout(timer);
+  }, [
+    selectedItemId,
+    title,
+    shortText,
+    text,
+    startAmount,
+    minStep,
+    startDateStr,
+    endDateStr,
+    autoActivate,
+    photos,
+    quickDuration,
+    isDraft,
+    isAuthenticated,
+  ]);
+
+  // При переходе на другой URL (размонтировании) обновлять лот со статусом draft (не чаще 1 раза в 5 секунд)
+  useEffect(() => {
+    return () => {
+      if (isDirtyRef.current && Date.now() - lastServerSaveTimeRef.current >= 5000) {
+        saveDraftRef.current();
+      }
+    };
+  }, []);
 
   const validate = () => {
     const errors: Record<string, string> = {};
@@ -288,8 +650,20 @@ export default function CreateLotPage() {
         ends_at: endIso,
         status: (isDraft ? 'draft' : 'pending_review') as 'draft' | 'pending_review',
         auto_activate: autoActivate,
+        photos: photos,
+        images: photos,
+        draft_ui: JSON.stringify({
+          quickDuration,
+          autoActivate,
+          isDraft,
+        }),
       };
 
+      if (user?.id) {
+        try {
+          localStorage.removeItem(`${DRAFT_STORAGE_KEY_PREFIX}${user.id}`);
+        } catch {}
+      }
       if (editingLotId) {
         const updated = await updateLot(editingLotId, payload);
         cacheLot(updated);
@@ -322,7 +696,7 @@ export default function CreateLotPage() {
     }
   };
 
-  // Предпросмотр карточки лота
+  // Предпросмотр карточки лота (первое фото всегда главная обложка)
   const previewLot: Lot = {
     id: editingLotId || 99999,
     seller_id: user?.id || 'me',
@@ -333,13 +707,19 @@ export default function CreateLotPage() {
       rating: 5.0,
     },
     item_id: selectedItemId || 1,
+    item_summary: {
+      id: selectedItemId || 1,
+      type: category,
+      preview: photos[0] || '/placeholder.svg',
+    },
     status: isDraft ? 'draft' : 'active',
     category,
     title: title || 'Название лота',
     description: {
       text: text || 'Полное описание лота...',
       short_text: shortText || 'Краткое описание для карточки',
-      media: [{ id: 'm1', type: 'image', order: 1 }],
+      photo: photos,
+      media: photos.map((p, idx) => ({ id: `m-${idx}`, url: p, type: 'image' as const, order: idx + 1 })),
       auto_activate: autoActivate,
     },
     start_amount: startAmount,
@@ -380,9 +760,22 @@ export default function CreateLotPage() {
       {/* Заголовок и селектор неначавшихся лотов */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
-            {editingLotId ? `Редактировать лот #${editingLotId}` : 'Выставить лот на аукцион'}
-          </h1>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+              {editingLotId ? `Редактировать лот #${editingLotId}` : 'Выставить лот на аукцион'}
+            </h1>
+            {draftSaving ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-700 text-[10px] font-semibold border border-teal-200 animate-pulse">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                <span>Сохранение черновика...</span>
+              </span>
+            ) : draftSavedAt ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-50 text-slate-600 text-[10px] font-medium border border-slate-200">
+                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                <span>Черновик сохранен ({draftSavedAt.toLocaleTimeString()})</span>
+              </span>
+            ) : null}
+          </div>
           <p className="text-xs sm:text-sm text-slate-500">
             {editingLotId
               ? 'Измените параметры черновика или лота на модерации'
@@ -478,6 +871,19 @@ export default function CreateLotPage() {
         </div>
       )}
 
+      {restoredFromLocal && (
+        <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl text-sky-900 text-xs flex items-center justify-between gap-2 animate-in fade-in">
+          <span>Восстановлен черновик лота из предыдущей сессии. Вы можете продолжить заполнение или сбросить форму.</span>
+          <button
+            type="button"
+            onClick={resetToCreateNew}
+            className="text-[11px] font-bold text-sky-700 hover:text-sky-900 underline cursor-pointer shrink-0"
+          >
+            Сбросить
+          </button>
+        </div>
+      )}
+
       {error ? <ErrorAlert error={error} onDismiss={() => setError(null)} /> : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -568,6 +974,194 @@ export default function CreateLotPage() {
             {fieldErrors.title ? (
               <p className="mt-1 text-xs text-rose-600 font-medium">{fieldErrors.title}</p>
             ) : null}
+          </div>
+
+          {/* Сетка фотографий лота (до 10 шт.) с Drag & Drop слева направо */}
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 transition-all duration-300">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-1 border-b border-slate-200/60">
+              <div>
+                <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <ImageIcon className="w-4 h-4 text-teal-600" />
+                  <span>Фотографии лота ({photos.length} из 10)</span>
+                </label>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Сетка упорядочивания слева направо. Перетаскивайте карточки для изменения порядка (№1 — главная обложка).
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {photos.length < 10 && (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadingPhoto}
+                    className="inline-flex items-center gap-1 px-3 py-1 bg-white hover:bg-teal-50 border border-teal-300 text-teal-700 text-xs font-bold rounded-lg shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {uploadingPhoto ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="w-3.5 h-3.5" />
+                    )}
+                    <span>{uploadingPhoto ? 'Загрузка...' : 'Добавить фото'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              onChange={handlePhotoFileChange}
+              className="hidden"
+            />
+
+            {photoError && (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{photoError}</span>
+              </div>
+            )}
+
+            {photos.length > 0 ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5 pt-1">
+                {photos.map((p, idx) => {
+                  const isDragging = draggedPhotoIdx === idx;
+                  const isOver = dragOverPhotoIdx === idx && draggedPhotoIdx !== idx;
+
+                  return (
+                    <div
+                      key={p + idx}
+                      draggable
+                      onDragStart={(e) => handlePhotoDragStart(e, idx)}
+                      onDragOver={(e) => handlePhotoDragOver(e, idx)}
+                      onDrop={(e) => handlePhotoDrop(e, idx)}
+                      onDragEnd={handlePhotoDragEnd}
+                      className={`relative group rounded-xl overflow-hidden border bg-white shadow-2xs aspect-4/3 cursor-grab active:cursor-grabbing select-none transition-all duration-200 ${
+                        isDragging
+                          ? 'opacity-40 scale-95 border-teal-500 border-dashed ring-2 ring-teal-400'
+                          : isOver
+                          ? 'border-teal-500 ring-2 ring-teal-500 scale-102 shadow-md'
+                          : 'border-slate-200 hover:border-teal-400 hover:shadow-sm'
+                      }`}
+                    >
+                      <img
+                        src={p}
+                        alt={`Фото ${idx + 1}`}
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src = '/placeholder.svg';
+                        }}
+                        className="w-full h-full object-cover pointer-events-none"
+                      />
+
+                      {/* Индикатор порядка слева направо: 1, 2, 3... */}
+                      <div className="absolute top-2 left-2 flex items-center gap-1 z-10">
+                        {idx === 0 ? (
+                          <span className="px-2 py-0.5 rounded-md bg-teal-600 text-white text-[11px] font-extrabold shadow-sm flex items-center gap-1">
+                            <Star className="w-3 h-3 fill-current" />
+                            <span>1 • Обложка</span>
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-md bg-slate-900/80 backdrop-blur-xs text-white text-[11px] font-bold shadow-sm">
+                            {idx + 1}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Иконка перетаскивания (Grip) */}
+                      <div className="absolute top-2 right-8 p-1 rounded-md bg-slate-900/60 text-white opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                        <GripVertical className="w-3.5 h-3.5" />
+                      </div>
+
+                      {/* Кнопка удаления фото */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemovePhoto(idx);
+                        }}
+                        className="absolute top-2 right-2 p-1 rounded-full bg-slate-900/70 hover:bg-rose-600 text-white transition-colors cursor-pointer z-10"
+                        title="Удалить фото"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Панель быстрого управления при hover внизу карточки */}
+                      <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-slate-900/90 via-slate-900/60 to-transparent flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity z-10 text-white">
+                        <div className="flex items-center gap-1">
+                          {idx > 0 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleMovePhoto(idx, idx - 1);
+                              }}
+                              className="p-1 rounded bg-white/20 hover:bg-white/40 text-white transition-colors cursor-pointer"
+                              title="Сдвинуть влево"
+                            >
+                              <ChevronLeft className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {idx < photos.length - 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleMovePhoto(idx, idx + 1);
+                              }}
+                              className="p-1 rounded bg-white/20 hover:bg-white/40 text-white transition-colors cursor-pointer"
+                              title="Сдвинуть вправо"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {idx > 0 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMakeCoverPhoto(idx);
+                            }}
+                            className="px-2 py-0.5 rounded bg-teal-600/90 hover:bg-teal-600 text-[10px] font-bold text-white transition-colors cursor-pointer"
+                            title="Сделать обложкой"
+                          >
+                            Сделать обложкой
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Дополнительная ячейка "Добавить еще" прямо в сетке */}
+                {photos.length < 10 && (
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="border-2 border-dashed border-slate-200 hover:border-teal-400 hover:bg-teal-50/30 rounded-xl flex flex-col items-center justify-center p-4 text-center cursor-pointer transition-colors aspect-4/3 text-slate-500 hover:text-teal-700 group"
+                  >
+                    <Plus className="w-6 h-6 mb-1.5 group-hover:scale-110 transition-transform text-teal-600" />
+                    <span className="text-xs font-bold">Добавить фото</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">{10 - photos.length} ост.</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="p-6 border-2 border-dashed border-slate-200 hover:border-teal-400 bg-white rounded-xl text-center cursor-pointer transition-colors"
+              >
+                <Upload className="w-6 h-6 text-slate-400 mx-auto mb-1.5" />
+                <span className="text-xs font-bold text-slate-700">
+                  Нажмите, чтобы загрузить фотографии лота
+                </span>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Первое фото станет главной обложкой карточки. Вы сможете менять порядок карточек перетаскиванием.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Категория: определяется автоматически по типу предмета */}
@@ -766,7 +1360,7 @@ export default function CreateLotPage() {
                 <p className="text-[11px] text-slate-500">
                   {isDraft
                     ? 'Лот останется в черновиках. Вы сможете доработать и отправить его позже.'
-                    : 'Лот сразу поступит на модерацию (Pending Review) для проверки администратором.'}
+                    : 'Лот сразу поступит на модерацию (Pending Review) для автоматической проверки.'}
                 </p>
               </div>
             </label>
@@ -797,7 +1391,7 @@ export default function CreateLotPage() {
           <div className="pt-2">
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || uploadingPhoto}
               className="w-full py-3 bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white font-bold text-sm rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
               {submitting ? (
@@ -813,7 +1407,7 @@ export default function CreateLotPage() {
                       ? `Сохранить изменения в лоте #${editingLotId}`
                       : isDraft
                       ? 'Сохранить как черновик'
-                      : 'Отправить лот на модерацию'}
+                      : 'Отправить лот на проверку'}
                   </span>
                 </>
               )}
@@ -839,6 +1433,10 @@ export default function CreateLotPage() {
 
           <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl text-[11px] text-slate-500 space-y-1">
             <div className="font-semibold text-slate-700">Информация о публикации:</div>
+            <div>
+              • Фотографий прикреплено:{' '}
+              <strong className="text-teal-700">{photos.length}</strong>
+            </div>
             <div>
               • Режим авто-запуска:{' '}
               <strong className={autoActivate ? 'text-teal-700' : 'text-slate-700'}>

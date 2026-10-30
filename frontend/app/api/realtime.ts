@@ -24,7 +24,6 @@ export function subscribeLot(lotId: number, handler: (event: LotStreamEvent) => 
     if (!active) return;
 
     const token = getStoredToken();
-    if (!token) return;
     const headers: Record<string, string> = {
       Accept: 'text/event-stream',
     };
@@ -41,7 +40,7 @@ export function subscribeLot(lotId: number, handler: (event: LotStreamEvent) => 
 
       if (!response.ok || !response.body) {
         if (active) {
-          setTimeout(startStream, 3000);
+          setTimeout(startStream, 5000);
         }
         return;
       }
@@ -95,7 +94,7 @@ export function subscribeLot(lotId: number, handler: (event: LotStreamEvent) => 
       }
     } catch {
       if (active) {
-        setTimeout(startStream, 3000);
+        setTimeout(startStream, 5000);
       }
     }
   };
@@ -108,89 +107,120 @@ export function subscribeLot(lotId: number, handler: (event: LotStreamEvent) => 
   };
 }
 
+// -------------------------------------------------------------
+// Мультиплексированный синглтон-поллер для публичных обновлений лотов
+// -------------------------------------------------------------
+const PUBLIC_POLL_INTERVAL_MS = 15000; // 15 секунд вместо 4 сек
+const publicSubscribers = new Set<(event: PublicStreamEvent) => void>();
+let publicTimer: ReturnType<typeof setInterval> | null = null;
+let lastKnownBids: Record<number, number> = {};
+
+async function pollPublicOnce() {
+  if (publicSubscribers.size === 0) return;
+  // Не нагружаем сервер, если вкладка свернута или не активна
+  if (typeof document !== 'undefined' && document.hidden) return;
+
+  try {
+    const res = await listLotsReal({ status: 'active', limit: 20 });
+    res.items.forEach((lot: Lot) => {
+      const prev = lastKnownBids[lot.id];
+      if (prev !== undefined && lot.current_bid !== prev) {
+        const ev: PublicStreamEvent = {
+          type: 'lot_updated',
+          lot_id: lot.id,
+          data: {
+            current_bid: lot.current_bid,
+            bids_count: lot.bids_count,
+            ends_at: lot.ends_at || undefined,
+          },
+        };
+        publicSubscribers.forEach((fn) => fn(ev));
+      }
+      lastKnownBids[lot.id] = lot.current_bid;
+    });
+  } catch {
+    // Ignore network errors in polling
+  }
+}
+
 /**
- * Подписка на публичные обновления лотов (опрос активных лотов с интервалом)
+ * Подписка на публичные обновления лотов (единый синглтон с интервалом 15 секунд)
  */
 export function subscribePublic(handler: (event: PublicStreamEvent) => void): () => void {
   if (typeof window === 'undefined') {
     return () => {};
   }
 
-  let active = true;
-  let lastKnownBids: Record<number, number> = {};
+  publicSubscribers.add(handler);
 
-  const poll = async () => {
-    if (!active) return;
-    try {
-      const res = await listLotsReal({ status: 'active', limit: 30 });
-      res.items.forEach((lot: Lot) => {
-        const prev = lastKnownBids[lot.id];
-        if (prev !== undefined && lot.current_bid !== prev) {
-          handler({
-            type: 'lot_updated',
-            lot_id: lot.id,
-            data: {
-              current_bid: lot.current_bid,
-              bids_count: lot.bids_count,
-              ends_at: lot.ends_at || undefined,
-            },
-          });
-        }
-        lastKnownBids[lot.id] = lot.current_bid;
-      });
-    } catch {
-      // Ignore network errors in polling
-    }
-  };
-
-  const timer = setInterval(poll, 4000);
+  if (!publicTimer) {
+    publicTimer = setInterval(pollPublicOnce, PUBLIC_POLL_INTERVAL_MS);
+  }
 
   return () => {
-    active = false;
-    clearInterval(timer);
+    publicSubscribers.delete(handler);
+    if (publicSubscribers.size === 0 && publicTimer) {
+      clearInterval(publicTimer);
+      publicTimer = null;
+    }
   };
 }
 
+// -------------------------------------------------------------
+// Мультиплексированный синглтон-поллер для обновлений баланса пользователя
+// -------------------------------------------------------------
+const USER_POLL_INTERVAL_MS = 20000; // 20 секунд вместо 5 сек
+const userSubscribers = new Set<(event: UserStreamEvent) => void>();
+let userTimer: ReturnType<typeof setInterval> | null = null;
+let lastBalance: number | null = null;
+let lastHold: number | null = null;
+
+async function pollUserOnce() {
+  if (userSubscribers.size === 0) return;
+  if (typeof document !== 'undefined' && document.hidden) return;
+
+  const token = getStoredToken();
+  if (!token) return; // Не опрашиваем, если не авторизован
+
+  try {
+    const u = await getCurrentUserReal();
+    if (lastBalance !== null && (u.balance !== lastBalance || u.hold !== lastHold)) {
+      const ev: UserStreamEvent = {
+        type: 'balance_changed',
+        data: {
+          balance: u.balance,
+          hold: u.hold,
+          available: u.balance - u.hold,
+        },
+      };
+      userSubscribers.forEach((fn) => fn(ev));
+    }
+    lastBalance = u.balance;
+    lastHold = u.hold;
+  } catch {
+    // Ignore when not logged in
+  }
+}
+
 /**
- * Подписка на персональные события пользователя (баланс, hold)
+ * Подписка на персональные события пользователя (единый синглтон с интервалом 20 секунд)
  */
 export function subscribeUser(handler: (event: UserStreamEvent) => void): () => void {
   if (typeof window === 'undefined') {
     return () => {};
   }
 
-  let active = true;
-  let lastBalance: number | null = null;
-  let lastHold: number | null = null;
+  userSubscribers.add(handler);
 
-  const checkUser = async () => {
-    if (!active) return;
-    const token = getStoredToken();
-    if (!token) return; // Не опрашиваем, если пользователь не авторизован
-
-    try {
-      const u = await getCurrentUserReal();
-      if (lastBalance !== null && (u.balance !== lastBalance || u.hold !== lastHold)) {
-        handler({
-          type: 'balance_changed',
-          data: {
-            balance: u.balance,
-            hold: u.hold,
-            available: u.balance - u.hold,
-          },
-        });
-      }
-      lastBalance = u.balance;
-      lastHold = u.hold;
-    } catch {
-      // Ignore when not logged in
-    }
-  };
-
-  const timer = setInterval(checkUser, 5000);
+  if (!userTimer) {
+    userTimer = setInterval(pollUserOnce, USER_POLL_INTERVAL_MS);
+  }
 
   return () => {
-    active = false;
-    clearInterval(timer);
+    userSubscribers.delete(handler);
+    if (userSubscribers.size === 0 && userTimer) {
+      clearInterval(userTimer);
+      userTimer = null;
+    }
   };
 }

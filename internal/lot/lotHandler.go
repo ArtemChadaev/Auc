@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,9 +14,13 @@ import (
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
 	"github.com/ArtemChadaev/Auction/cmd/httpx"
+	"github.com/ArtemChadaev/Auction/cmd/httpx/middleware"
 	"github.com/ArtemChadaev/Auction/cmd/mimeType"
 	"github.com/ArtemChadaev/Auction/cmd/storage"
+	"github.com/ArtemChadaev/Auction/cmd/storageS3"
+	"github.com/ArtemChadaev/Auction/internal/user"
 	"github.com/justinas/alice"
+	"uuid"
 )
 
 type Handler struct {
@@ -68,6 +73,19 @@ func (r *reqNewLot) check() error {
 		case mimeType.Image, mimeType.Model3D, mimeType.Audio, mimeType.Video, mimeType.Document, mimeType.Archive:
 		default:
 			return errors.New("invalid description type")
+		}
+	}
+
+	// Принимаем только UUID в images, без PhotoURL
+	r.Description.PhotoURL = nil
+	if r.Description.Images != nil {
+		for _, img := range *r.Description.Images {
+			if strings.TrimSpace(img) == "" {
+				continue
+			}
+			if _, ok := ExtractUUID(img); !ok {
+				return fmt.Errorf("invalid photo uuid in images: '%s'", img)
+			}
 		}
 	}
 	return nil
@@ -128,6 +146,21 @@ func (h *Handler) getByID(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
 		return
+	}
+
+	// Черновики, отклоненные лоты и лоты на проверке доступны только их автору (продавцу)
+	if lot.Status == Draft || lot.Status == PendingReview || lot.Status == Rejected {
+		var callerUID uuid.UUID
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			token := strings.TrimPrefix(auth, "Bearer ")
+			if uid, _, vErr := user.VerifyAccessToken(token); vErr == nil {
+				callerUID = uid
+			}
+		}
+		if callerUID == uuid.Nil() || callerUID != lot.SellerID {
+			httpx.WriteResponse(w, httpx.ErrRespNotFound)
+			return
+		}
 	}
 
 	httpx.WriteResponse(w, httpx.Response{
@@ -445,15 +478,173 @@ func (h *Handler) approved(w http.ResponseWriter, r *http.Request) {
 	if err = h.service.approve(r.Context(), id); err != nil {
 		apperr.Log(r.Context(), "lotHandler.approved", err)
 		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+		return
 	}
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK})
+}
+
+// uploadPhoto загружает фотографию для лота в хранилище photosS3.
+//
+// @Summary Загрузить фотографию для лота
+// @Description Загружает фотографию (JPEG, PNG, WebP до 5 МБ) в хранилище photosS3.
+// @Description Бакет photos является публичным для свободного скачивания клиентами напрямую по ID/UUID из S3 хранилища.
+// @Description В ответе возвращаются UUID фотографии, локальный API URL и прямой публичный URL в S3.
+// @Tags lot
+// @Security BearerAuth
+// @Accept multipart/form-data
+// @Produce json
+// @Param file formData file true "Файл изображения лота"
+// @Success 200 {object} httpx.Response{data=map[string]string} "Возвращает id (UUID), url (API прокси) и direct_url (прямая ссылка на S3)"
+// @Failure 400 {object} httpx.Response "Недопустимый формат или размер"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 429 {object} httpx.Response "Превышен лимит загрузки фото (макс. 30 в час)"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/lot/photo [post]
+func (h *Handler) uploadPhoto(w http.ResponseWriter, r *http.Request) {
+	uid, err := cfg.GetUID(r.Context())
+	if err != nil {
+		apperr.Log(r.Context(), "lotHandler.uploadPhoto.GetUID", err)
+		httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
+		return
+	}
+
+	ct := r.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "multipart/form-data") {
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			httpx.WriteResponse(w, httpx.ErrRespReqEntityTooLarge)
+			return
+		}
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		return
+	}
+	defer file.Close()
+
+	photoURL, photoID, directURL, err := h.service.uploadPhoto(r.Context(), uid, file, header.Filename, header.Size)
+	if err != nil {
+		if errors.Is(err, ErrPhotoUploadLimitReached) {
+			httpx.WriteResponse(w, httpx.ErrRespPhotoUploadLimit)
+			return
+		}
+		if errors.Is(err, mimeType.ErrUnsupportedType) || errors.Is(err, mimeType.ErrInvalidExtension) ||
+			errors.Is(err, mimeType.ErrNotImage) || errors.Is(err, mimeType.ErrFileSizeExceeded) {
+			httpx.WriteResponse(w, httpx.Response{
+				Code:  http.StatusBadRequest,
+				Error: err.Error(),
+			})
+			return
+		}
+		apperr.Log(r.Context(), "lotHandler.uploadPhoto", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+		return
+	}
+
+	primaryURL := directURL
+	if primaryURL == "" {
+		primaryURL = photoURL
+	}
+
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+		Data: map[string]any{
+			"id":         photoID,
+			"uuid":       photoID,
+			"url":        primaryURL,
+			"direct_url": directURL,
+		},
+	})
+}
+
+// getPhotoPrefix возвращает префикс URL для получения фотографий по их UUID.
+//
+// @Summary Получить префикс URL для фотографий
+// @Description Возвращает базовый URL хранилища фотографий (photosS3 bucket URL или API prefix)
+// @Tags lot
+// @Produce json
+// @Success 200 {object} httpx.Response
+// @Router /api/lot/photo/prefix [get]
+func (h *Handler) getPhotoPrefix(w http.ResponseWriter, r *http.Request) {
+	prefix := h.service.GetPhotoPrefix()
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+		Data: map[string]string{
+			"prefix": prefix,
+		},
+	})
+}
+
+// getPhoto возвращает бинарное содержимое фотографии по ее ключу или ID либо перенаправляет на прямой S3 URL.
+//
+// @Summary Получить фотографию лота
+// @Description Возвращает файл изображения из хранилища photosS3, либо прямую ссылку в заголовке X-Direct-URL / Location.
+// @Description Клиенты могут скачивать фотографии лотов свободно напрямую из публичного бакета photosS3 по UUID без проксирования через бэкенд.
+// @Tags lot
+// @Produce image/jpeg
+// @Param id path string true "ID или ключ фотографии (UUID)"
+// @Success 200 {file} binary "Бинарное изображение"
+// @Failure 404 {object} httpx.Response "Фотография не найдена"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/lot/photo/{id} [get]
+func (h *Handler) getPhoto(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		return
+	}
+
+	key := strings.TrimPrefix(id, "/api/lot/photo/")
+	if idx := strings.LastIndex(key, "/"); idx != -1 {
+		key = key[idx+1:]
+	}
+	key = strings.TrimSpace(key)
+
+	if directURL := h.service.getDirectPhotoURL(key); directURL != "" {
+		http.Redirect(w, r, directURL, http.StatusMovedPermanently)
+		return
+	}
+
+	rc, contentType, directURL, err := h.service.getPhoto(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, storageS3.ErrNotFound) {
+			httpx.WriteResponse(w, httpx.ErrRespNotFound)
+			return
+		}
+		apperr.Log(r.Context(), "lotHandler.getPhoto", err)
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+		return
+	}
+	defer rc.Close()
+
+	if directURL != "" {
+		w.Header().Set("X-Direct-URL", directURL)
+	}
+
+	if contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	} else {
+		w.Header().Set("Content-Type", "image/jpeg")
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+
+	_, _ = io.Copy(w, rc)
 }
 
 // RouterLot api/lot/
 func (h *Handler) RouterLot(authChain alice.Chain, adminChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", h.list)
-	mux.HandleFunc("GET /{id}", h.getByID)
+
+	listChain := alice.New(middleware.EndpointRateLimit(h.service.valkey, "list_lots", 120, 60))
+	getLotChain := alice.New(middleware.EndpointRateLimit(h.service.valkey, "get_lot", 120, 60))
+	getPhotoChain := alice.New(middleware.EndpointRateLimit(h.service.valkey, "get_photo", 240, 120))
+	photoUploadChain := authChain.Append(middleware.EndpointRateLimit(h.service.valkey, "upload_photo", 30, 0))
+
+	mux.Handle("GET /", listChain.ThenFunc(h.list))
+	mux.Handle("GET /{id}", getLotChain.ThenFunc(h.getByID))
 	mux.Handle("GET /my", authChain.ThenFunc(h.getMyLots))
 
 	mux.Handle("POST /", authChain.ThenFunc(h.create))
@@ -462,6 +653,15 @@ func (h *Handler) RouterLot(authChain alice.Chain, adminChain alice.Chain) http.
 	mux.Handle("POST /{id}/activate", authChain.ThenFunc(h.activate))
 
 	mux.Handle("POST /{id}/approved", adminChain.ThenFunc(h.approved))
+
+	photoPrefixChain := alice.New(middleware.EndpointRateLimit(h.service.valkey, "get_photo_prefix", 240, 120))
+
+	// Фотографии лота
+	mux.Handle("GET /photo/prefix", photoPrefixChain.ThenFunc(h.getPhotoPrefix))
+	mux.Handle("GET /photo-prefix", photoPrefixChain.ThenFunc(h.getPhotoPrefix))
+	mux.Handle("POST /photo", photoUploadChain.ThenFunc(h.uploadPhoto))
+	mux.Handle("GET /photo/{id}", getPhotoChain.ThenFunc(h.getPhoto))
+
 	return mux
 }
 
@@ -613,9 +813,10 @@ func (h *Handler) streamBids(w http.ResponseWriter, r *http.Request) {
 // RouterBid api/bid/
 func (h *Handler) RouterBid(authChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
+	bidChain := authChain.Append(middleware.EndpointRateLimit(h.service.valkey, "bid", 60, 0))
 
-	mux.HandleFunc("POST /{id}", h.bid)
+	mux.Handle("POST /{id}", bidChain.ThenFunc(h.bid))
 	mux.HandleFunc("GET /{id}/stream", h.streamBids)
 
-	return authChain.Then(mux)
+	return mux
 }

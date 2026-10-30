@@ -1,14 +1,16 @@
 import React from 'react';
-import { ArrowDownLeft, ArrowUpRight, History } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, History, RefreshCw } from 'lucide-react';
 import type { LedgerEntry } from '~/api/types';
 import { formatCoins } from '~/lib/money';
 import { formatDate } from '~/lib/date';
 
 interface TransactionsTableProps {
   transactions: LedgerEntry[];
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }
 
-export function TransactionsTable({ transactions }: TransactionsTableProps) {
+export function TransactionsTable({ transactions, onRefresh, refreshing }: TransactionsTableProps) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs space-y-4">
       <div className="flex items-center justify-between">
@@ -19,6 +21,19 @@ export function TransactionsTable({ transactions }: TransactionsTableProps) {
             {transactions.length}
           </span>
         </div>
+
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-teal-700 bg-slate-50 hover:bg-teal-50 border border-slate-200 rounded-xl transition-colors font-medium cursor-pointer disabled:opacity-50"
+            title="Обновить историю операций с сервера"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-teal-600' : ''}`} />
+            <span>{refreshing ? 'Загрузка...' : 'Обновить'}</span>
+          </button>
+        )}
       </div>
 
       {transactions.length === 0 ? (

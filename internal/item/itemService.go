@@ -38,6 +38,15 @@ func (s *Service) getItem(ctx context.Context, id int64) (Item, error) {
 	return item, nil
 }
 
+// getMyItems получение списка предметов текущего пользователя
+func (s *Service) getMyItems(ctx context.Context, uid uuid.UUID) ([]Item, error) {
+	items, err := s.repo.getItemsByOwner(ctx, uid)
+	if err != nil {
+		return nil, fmt.Errorf("itemService.getMyItems: %w", err)
+	}
+	return items, nil
+}
+
 // newOwner смена владельца
 func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID int64, lotID *int64, description *string) error {
 	tx, err := s.pool.Begin(ctx)

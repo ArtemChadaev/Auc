@@ -91,12 +91,70 @@ export const ERROR_MESSAGES: Record<string, ErrorDescriptor> = {
     kind: 'system',
     severity: 'destructive',
   },
+
+  // 429 Too Many Requests (Rate Limits)
+  rate_limit: {
+    title: 'Слишком много запросов (429)',
+    description: 'Превышен лимит запросов к серверу. Пожалуйста, подождите немного перед повторной попыткой.',
+    kind: 'race',
+    severity: 'warning',
+  },
+  free_coin_limit: {
+    title: 'Бонус уже получен',
+    description: 'Бесплатные монеты (+1 000 🪙) можно получить только один раз в сутки (сброс в 00:00 UTC).',
+    kind: 'user',
+    severity: 'info',
+  },
+  photo_upload_limit: {
+    title: 'Лимит загрузки фотографий',
+    description: 'Вы можете загружать не более 30 фотографий в час. Пожалуйста, подождите немного.',
+    kind: 'user',
+    severity: 'warning',
+  },
+  download_limit: {
+    title: 'Лимит скачиваний',
+    description: 'Превышен суточный лимит скачиваний (максимум 1 скачивание в сутки).',
+    kind: 'user',
+    severity: 'warning',
+  },
+  bid_rate_limit: {
+    title: 'Слишком частые ставки',
+    description: 'Пожалуйста, подождите пару секунд перед размещением следующей ставки.',
+    kind: 'race',
+    severity: 'warning',
+  },
 };
 
 export function getErrorMessage(code: string, fallbackMessage?: string): ErrorDescriptor {
   if (ERROR_MESSAGES[code]) {
+    if (fallbackMessage && fallbackMessage !== code && !fallbackMessage.startsWith('http_error')) {
+      return {
+        ...ERROR_MESSAGES[code],
+        description: fallbackMessage,
+      };
+    }
     return ERROR_MESSAGES[code];
   }
+
+  // Динамический разбор текста ошибки при неспецифичном коде
+  if (fallbackMessage) {
+    const lower = fallbackMessage.toLowerCase();
+    if (lower.includes('free coin') || lower.includes('once per day') || lower.includes('бесплатные монеты') || lower.includes('бонус')) {
+      return ERROR_MESSAGES.free_coin_limit;
+    }
+    if (lower.includes('photo upload') || lower.includes('фото')) {
+      return ERROR_MESSAGES.photo_upload_limit;
+    }
+    if (lower.includes('429') || lower.includes('rate limit') || lower.includes('слишком много запросов')) {
+      return {
+        title: 'Слишком много запросов (429)',
+        description: fallbackMessage,
+        kind: 'race',
+        severity: 'warning',
+      };
+    }
+  }
+
   return {
     title: 'Ошибка операции',
     description: fallbackMessage || `Код ошибки: ${code}`,

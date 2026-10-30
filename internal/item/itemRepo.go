@@ -90,6 +90,24 @@ func (r *Repo) getItem(ctx context.Context, id int64) (Item, error) {
 	return item, nil
 }
 
+// getItemsByOwner возвращает все предметы, принадлежащие указанному пользователю, отсортированные по дате создания
+func (r *Repo) getItemsByOwner(ctx context.Context, ownerID uuid.UUID) ([]Item, error) {
+	rows, err := r.db.Query(ctx, "SELECT id, creator_id, owner_id, s3_id, type, metadata, created_at FROM items WHERE owner_id = $1 ORDER BY created_at DESC", ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("itemRepo.getItemsByOwner: %w", storage.ErrRepo(err))
+	}
+	defer rows.Close()
+
+	items, err := pgx.CollectRows(rows, pgx.RowToStructByName[Item])
+	if err != nil {
+		return nil, fmt.Errorf("itemRepo.getItemsByOwner: %w", storage.ErrRepo(err))
+	}
+	if items == nil {
+		items = []Item{}
+	}
+	return items, nil
+}
+
 func (r *Repo) delete(ctx context.Context, id int64) error {
 	_, err := r.db.Exec(ctx, "DELETE FROM items WHERE id = $1", id)
 	if err != nil {

@@ -139,7 +139,7 @@ func (r *Repo) updateAfterFinish(ctx context.Context, id int64, winnerID uuid.UU
 
 func (r *Repo) getById(ctx context.Context, id int64) (Lot, error) {
 	var lot Lot
-	row, err := r.db.Query(ctx, "SELECT * FROM lots WHERE id = $1 AND status IN ($2, $3, $4, $5)", id, Approved, Active, Finished, Cancelled)
+	row, err := r.db.Query(ctx, "SELECT * FROM lots WHERE id = $1", id)
 	if err != nil {
 		return lot, fmt.Errorf("lotRepo.getById: %w", storage.ErrRepo(err))
 	}
@@ -293,4 +293,229 @@ func (r *Repo) approve(ctx context.Context, id int64) error {
 		return fmt.Errorf("lotRepo.approve: %w", storage.ErrNotFound)
 	}
 	return nil
+}
+
+func (r *Repo) allPendingReview(ctx context.Context) ([]int64, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id 
+		FROM lots 
+		WHERE status = $1 
+		ORDER BY id ASC`, PendingReview)
+	if err != nil {
+		return nil, fmt.Errorf("lotRepo.allPendingReview: %w", storage.ErrRepo(err))
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return nil, fmt.Errorf("lotRepo.allPendingReview: %w", storage.ErrRepo(err))
+	}
+	return ids, nil
+}
+
+func (r *Repo) getLotForReview(ctx context.Context, id int64) (Lot, error) {
+	row, err := r.db.Query(ctx, `
+		SELECT id, seller_id, item_id, status, winner_id, start_amount, min_step, finish_amount, title, description, created_at, started_at, ends_at, finished_at 
+		FROM lots 
+		WHERE id = $1 AND status = $2 
+		FOR UPDATE SKIP LOCKED`, id, PendingReview)
+	if err != nil {
+		return Lot{}, fmt.Errorf("lotRepo.getLotForReview: %w", storage.ErrRepo(err))
+	}
+	lot, err := pgx.CollectExactlyOneRow(row, pgx.RowToStructByName[Lot])
+	if err != nil {
+		return Lot{}, fmt.Errorf("lotRepo.getLotForReview: %w", storage.ErrRepo(err))
+	}
+	return lot, nil
+}
+
+func (r *Repo) reject(ctx context.Context, id int64, reason string) error {
+	var err error
+	if reason != "" {
+		_, err = r.db.Exec(ctx, `
+			UPDATE lots 
+			SET status = $1, description = jsonb_set(COALESCE(description, '{}'::jsonb), '{reject_reason}', to_jsonb($2::text))
+			WHERE id = $3 AND status = $4`,
+			Rejected, reason, id, PendingReview)
+	} else {
+		_, err = r.db.Exec(ctx, `
+			UPDATE lots 
+			SET status = $1 
+			WHERE id = $2 AND status = $3`,
+			Rejected, id, PendingReview)
+	}
+	if err != nil {
+		return fmt.Errorf("lotRepo.reject: %w", storage.ErrRepo(err))
+	}
+	return nil
+}
+
+func (r *Repo) insertS3Hash(ctx context.Context, hash string) (uuid.UUID, bool, error) {
+	var id uuid.UUID
+	var isInserted bool
+	row := r.db.QueryRow(ctx, `
+		INSERT INTO s3 (hash)
+		VALUES ($1)
+		ON CONFLICT (hash) DO UPDATE SET hash = EXCLUDED.hash
+		RETURNING id, (xmax = 0) AS is_inserted
+	`, hash)
+	err := row.Scan(&id, &isInserted)
+	if err != nil {
+		return uuid.Nil(), false, fmt.Errorf("lotRepo.insertS3Hash: %w", storage.ErrRepo(err))
+	}
+	return id, isInserted, nil
+}
+
+// lockCandidateExpiredLots блокирует строки устаревших лотов (draft, rejected, cancelled > 30 дней)
+// с помощью FOR UPDATE SKIP LOCKED, гарантируя, что во время цикла очистки эти лоты не могут
+// параллельно редактироваться или активироваться.
+func (r *Repo) lockCandidateExpiredLots(ctx context.Context) ([]int64, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id
+		FROM lots
+		WHERE status IN ('draft', 'rejected', 'cancelled')
+		  AND created_at < now() - INTERVAL '30 days'
+		  AND (
+		      (description->'images' IS NOT NULL AND jsonb_array_length(COALESCE(description->'images', '[]'::jsonb)) > 0)
+		      OR
+		      (description->'photo' IS NOT NULL AND jsonb_array_length(COALESCE(description->'photo', '[]'::jsonb)) > 0)
+		  )
+		FOR UPDATE SKIP LOCKED
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("lotRepo.lockCandidateExpiredLots: %w", storage.ErrRepo(err))
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("lotRepo.lockCandidateExpiredLots scan: %w", storage.ErrRepo(err))
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// getExpiredPhotoKeysForLockedLots извлекает ключи фото из заблокированных лотов,
+// исключая любые фото, которые используются в защищенных лотах (pending_review, approved, active, finished),
+// в свежих черновиках (< 30 дней), а также в таблицах items и users.
+func (r *Repo) getExpiredPhotoKeysForLockedLots(ctx context.Context, lockedLotIDs []int64) ([]string, error) {
+	if len(lockedLotIDs) == 0 {
+		return nil, nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		WITH locked_photos AS (
+			SELECT DISTINCT regexp_replace(jsonb_array_elements_text(COALESCE(description->'images', description->'photo', '[]'::jsonb)), '^.*/', '') AS photo_key
+			FROM lots
+			WHERE id = ANY($1)
+		),
+		preserved_photos AS (
+			SELECT DISTINCT regexp_replace(jsonb_array_elements_text(COALESCE(description->'images', description->'photo', '[]'::jsonb)), '^.*/', '') AS photo_key
+			FROM lots
+			WHERE NOT (id = ANY($1))
+			  AND (description->'images' IS NOT NULL OR description->'photo' IS NOT NULL)
+		)
+		SELECT lp.photo_key
+		FROM locked_photos lp
+		WHERE lp.photo_key <> ''
+		  AND lp.photo_key NOT IN (SELECT photo_key FROM preserved_photos WHERE photo_key <> '')
+		  AND NOT EXISTS (
+			  SELECT 1 FROM items WHERE items.s3_id::text = lp.photo_key
+		  )
+		  AND NOT EXISTS (
+			  SELECT 1 FROM users WHERE users.avatar_id::text = lp.photo_key
+		  )
+	`, lockedLotIDs)
+	if err != nil {
+		return nil, fmt.Errorf("lotRepo.getExpiredPhotoKeysForLockedLots: %w", storage.ErrRepo(err))
+	}
+	defer rows.Close()
+
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("lotRepo.getExpiredPhotoKeysForLockedLots scan: %w", storage.ErrRepo(err))
+		}
+		if key != "" {
+			keys = append(keys, key)
+		}
+	}
+	return keys, nil
+}
+
+// clearLockedLotsPhotos очищает массив фотографий в description у переданных заблокированных лотов.
+func (r *Repo) clearLockedLotsPhotos(ctx context.Context, lockedLotIDs []int64) error {
+	if len(lockedLotIDs) == 0 {
+		return nil
+	}
+	_, err := r.db.Exec(ctx, `
+		UPDATE lots
+		SET description = description - 'photo' - 'images'
+		WHERE id = ANY($1)
+	`, lockedLotIDs)
+	if err != nil {
+		return fmt.Errorf("lotRepo.clearLockedLotsPhotos: %w", storage.ErrRepo(err))
+	}
+	return nil
+}
+
+// deleteS3RecordsIfUnused атомарно блокирует и удаляет запись из таблицы s3, если фото больше
+// никем не используется (ни в items, ни в users, ни в любых лотах через GIN индекс).
+func (r *Repo) deleteS3RecordsIfUnused(ctx context.Context, keys []string) ([]string, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		DELETE FROM s3
+		WHERE id::text = ANY($1)
+		  AND NOT EXISTS (SELECT 1 FROM items WHERE items.s3_id = s3.id)
+		  AND NOT EXISTS (SELECT 1 FROM users WHERE users.avatar_id = s3.id)
+		  AND NOT EXISTS (
+			  SELECT 1 FROM lots
+			  WHERE lots.description->'images' ? s3.id::text
+			     OR lots.description->'photo' ? ('/api/lot/photo/' || s3.id::text)
+			     OR lots.description->'photo' ? (s3.id::text)
+			     OR lots.description::text LIKE ('%' || s3.id::text || '%')
+		  )
+		RETURNING id::text
+	`, keys)
+	if err != nil {
+		return nil, fmt.Errorf("lotRepo.deleteS3RecordsIfUnused: %w", storage.ErrRepo(err))
+	}
+	defer rows.Close()
+
+	var deleted []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		deleted = append(deleted, d)
+	}
+	return deleted, nil
+}
+
+// isOrphanPhotoReferenced проверяет, прикреплена ли неприкрепленная фотография к какому-либо лоту, предмету или аватару.
+func (r *Repo) isOrphanPhotoReferenced(ctx context.Context, key string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM items WHERE items.s3_id::text = $1
+			UNION ALL
+			SELECT 1 FROM users WHERE users.avatar_id::text = $1
+			UNION ALL
+			SELECT 1 FROM lots
+			WHERE lots.description->'images' ? ($1)
+			   OR lots.description->'photo' ? ('/api/lot/photo/' || $1)
+			   OR lots.description->'photo' ? ($1)
+			   OR lots.description::text LIKE ('%' || $1 || '%')
+		)
+	`, key).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("lotRepo.isOrphanPhotoReferenced: %w", storage.ErrRepo(err))
+	}
+	return exists, nil
 }
