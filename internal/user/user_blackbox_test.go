@@ -319,3 +319,263 @@ func TestAuthRefresh(t *testing.T) {
 		t.Errorf("authRefresh succeeded with invalid token, expected error")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// 6. AdminChangeBalance Tests
+// -----------------------------------------------------------------------------
+
+func TestAdminChangeBalance_TopUp(t *testing.T) {
+	service, pool, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	initialBalance := 200
+	uid, _, _ := createTestUser(t, pool, initialBalance, 0)
+
+	newBal, err := service.AdminChangeBalance(ctx, uid, 500)
+	if err != nil {
+		t.Fatalf("AdminChangeBalance(+500) failed: %v", err)
+	}
+	if newBal != 700 {
+		t.Errorf("expected returned balance 700, got %d", newBal)
+	}
+
+	var dbBal int
+	err = pool.QueryRow(ctx, "SELECT balance FROM users WHERE id = $1", uid).Scan(&dbBal)
+	if err != nil {
+		t.Fatalf("failed to query user: %v", err)
+	}
+	if dbBal != 700 {
+		t.Errorf("expected DB balance 700, got %d", dbBal)
+	}
+
+	var ledgerAmount, balanceAfter int
+	var ledgerType string
+	err = pool.QueryRow(ctx, `
+		SELECT amount, balance_after, type 
+		FROM ledger_entries 
+		WHERE user_id = $1 
+		ORDER BY id DESC LIMIT 1
+	`, uid).Scan(&ledgerAmount, &balanceAfter, &ledgerType)
+	if err != nil {
+		t.Fatalf("failed to query ledger_entries: %v", err)
+	}
+	if ledgerAmount != 500 {
+		t.Errorf("expected ledger amount 500, got %d", ledgerAmount)
+	}
+	if balanceAfter != 700 {
+		t.Errorf("expected ledger balance_after 700, got %d", balanceAfter)
+	}
+	if ledgerType != "top_up" {
+		t.Errorf("expected ledger type 'top_up', got %q", ledgerType)
+	}
+}
+
+func TestAdminChangeBalance_Deduct(t *testing.T) {
+	service, pool, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	initialBalance := 1000
+	uid, _, _ := createTestUser(t, pool, initialBalance, 0)
+
+	newBal, err := service.AdminChangeBalance(ctx, uid, -300)
+	if err != nil {
+		t.Fatalf("AdminChangeBalance(-300) failed: %v", err)
+	}
+	if newBal != 700 {
+		t.Errorf("expected returned balance 700, got %d", newBal)
+	}
+
+	var dbBal int
+	err = pool.QueryRow(ctx, "SELECT balance FROM users WHERE id = $1", uid).Scan(&dbBal)
+	if err != nil {
+		t.Fatalf("failed to query user: %v", err)
+	}
+	if dbBal != 700 {
+		t.Errorf("expected DB balance 700, got %d", dbBal)
+	}
+
+	var ledgerAmount, balanceAfter int
+	err = pool.QueryRow(ctx, `
+		SELECT amount, balance_after 
+		FROM ledger_entries 
+		WHERE user_id = $1 
+		ORDER BY id DESC LIMIT 1
+	`, uid).Scan(&ledgerAmount, &balanceAfter)
+	if err != nil {
+		t.Fatalf("failed to query ledger_entries: %v", err)
+	}
+	if ledgerAmount != -300 {
+		t.Errorf("expected ledger amount -300, got %d", ledgerAmount)
+	}
+	if balanceAfter != 700 {
+		t.Errorf("expected ledger balance_after 700, got %d", balanceAfter)
+	}
+}
+
+func TestAdminChangeBalance_DeductBelowHold(t *testing.T) {
+	service, pool, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	uid, _, _ := createTestUser(t, pool, 500, 400)
+
+	_, err := service.AdminChangeBalance(ctx, uid, -150)
+	if err == nil {
+		t.Errorf("AdminChangeBalance(-150) succeeded, expected ErrInsufficientBalance")
+	} else if !errors.Is(err, ErrInsufficientBalance) {
+		t.Errorf("expected ErrInsufficientBalance, got: %v", err)
+	}
+}
+
+func TestAdminChangeBalance_ZeroAmount(t *testing.T) {
+	service, pool, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	uid, _, _ := createTestUser(t, pool, 500, 0)
+
+	_, err := service.AdminChangeBalance(ctx, uid, 0)
+	if err == nil {
+		t.Errorf("AdminChangeBalance(0) succeeded, expected ErrInvalidAmount")
+	} else if !errors.Is(err, ErrInvalidAmount) {
+		t.Errorf("expected ErrInvalidAmount, got: %v", err)
+	}
+}
+
+func TestAdminChangeBalance_NonExistentUser(t *testing.T) {
+	service, _, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	nonExistentUID := uuid.New()
+	_, err := service.AdminChangeBalance(ctx, nonExistentUID, 100)
+	if err == nil {
+		t.Errorf("AdminChangeBalance for non-existent user succeeded, expected error")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 7. AdminTransferFunds Tests
+// -----------------------------------------------------------------------------
+
+func TestAdminTransferFunds_Success(t *testing.T) {
+	service, pool, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	userA, _, _ := createTestUser(t, pool, 1000, 0)
+	userB, _, _ := createTestUser(t, pool, 200, 0)
+
+	err := service.AdminTransferFunds(ctx, userA, userB, 350)
+	if err != nil {
+		t.Fatalf("AdminTransferFunds failed: %v", err)
+	}
+
+	var balA, balB int
+	_ = pool.QueryRow(ctx, "SELECT balance FROM users WHERE id = $1", userA).Scan(&balA)
+	_ = pool.QueryRow(ctx, "SELECT balance FROM users WHERE id = $1", userB).Scan(&balB)
+
+	if balA != 650 {
+		t.Errorf("expected user A balance 650, got %d", balA)
+	}
+	if balB != 550 {
+		t.Errorf("expected user B balance 550, got %d", balB)
+	}
+
+	var amountA, amountB int
+	err = pool.QueryRow(ctx, "SELECT amount FROM ledger_entries WHERE user_id = $1 ORDER BY id DESC LIMIT 1", userA).Scan(&amountA)
+	if err != nil {
+		t.Fatalf("failed to query ledger entry for user A: %v", err)
+	}
+	if amountA != -350 {
+		t.Errorf("expected ledger amount -350 for user A, got %d", amountA)
+	}
+
+	err = pool.QueryRow(ctx, "SELECT amount FROM ledger_entries WHERE user_id = $1 ORDER BY id DESC LIMIT 1", userB).Scan(&amountB)
+	if err != nil {
+		t.Fatalf("failed to query ledger entry for user B: %v", err)
+	}
+	if amountB != 350 {
+		t.Errorf("expected ledger amount +350 for user B, got %d", amountB)
+	}
+}
+
+func TestAdminTransferFunds_InsufficientBalance(t *testing.T) {
+	service, pool, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	userA, _, _ := createTestUser(t, pool, 500, 400)
+	userB, _, _ := createTestUser(t, pool, 200, 0)
+
+	err := service.AdminTransferFunds(ctx, userA, userB, 150)
+	if err == nil {
+		t.Errorf("AdminTransferFunds with insufficient balance succeeded, expected ErrInsufficientBalance")
+	} else if !errors.Is(err, ErrInsufficientBalance) {
+		t.Errorf("expected ErrInsufficientBalance, got: %v", err)
+	}
+}
+
+func TestAdminTransferFunds_SameUser(t *testing.T) {
+	service, pool, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	userA, _, _ := createTestUser(t, pool, 500, 0)
+
+	err := service.AdminTransferFunds(ctx, userA, userA, 100)
+	if err == nil {
+		t.Errorf("AdminTransferFunds to same user succeeded, expected ErrSameUser")
+	} else if !errors.Is(err, ErrSameUser) {
+		t.Errorf("expected ErrSameUser, got: %v", err)
+	}
+}
+
+func TestAdminTransferFunds_InvalidAmount(t *testing.T) {
+	service, pool, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	userA, _, _ := createTestUser(t, pool, 500, 0)
+	userB, _, _ := createTestUser(t, pool, 500, 0)
+
+	// amount = 0
+	err := service.AdminTransferFunds(ctx, userA, userB, 0)
+	if err == nil {
+		t.Errorf("AdminTransferFunds(0) succeeded, expected ErrInvalidAmount")
+	} else if !errors.Is(err, ErrInvalidAmount) {
+		t.Errorf("expected ErrInvalidAmount for amount=0, got: %v", err)
+	}
+
+	// amount < 0
+	err = service.AdminTransferFunds(ctx, userA, userB, -50)
+	if err == nil {
+		t.Errorf("AdminTransferFunds(-50) succeeded, expected ErrInvalidAmount")
+	} else if !errors.Is(err, ErrInvalidAmount) {
+		t.Errorf("expected ErrInvalidAmount for amount=-50, got: %v", err)
+	}
+}
+
+func TestAdminTransferFunds_ConcurrentDeadlock(t *testing.T) {
+	service, pool, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	userA, _, _ := createTestUser(t, pool, 100000, 0)
+	userB, _, _ := createTestUser(t, pool, 100000, 0)
+
+	const n = 20
+	errCh := make(chan error, n*2)
+
+	for i := 0; i < n; i++ {
+		go func() {
+			errCh <- service.AdminTransferFunds(ctx, userA, userB, 10)
+		}()
+		go func() {
+			errCh <- service.AdminTransferFunds(ctx, userB, userA, 10)
+		}()
+	}
+
+	for i := 0; i < n*2; i++ {
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Errorf("concurrent transfer error: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("deadlock detected during concurrent transfers")
+		}
+	}
+}

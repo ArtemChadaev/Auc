@@ -477,8 +477,8 @@ func TestFinishLot_ExpiredWithBids(t *testing.T) {
 	sellerID := createTestUser(t, pool, sellerInitialBalance, 0)
 	itemID := createTestItem(t, pool, sellerID)
 
-	pastEndsAt := time.Now().Add(-5 * time.Minute)
-	lotID := createTestLot(t, pool, sellerID, itemID, "active", 100, 10, &pastEndsAt)
+	futureEndsAt := time.Now().Add(1 * time.Hour)
+	lotID := createTestLot(t, pool, sellerID, itemID, "active", 100, 10, &futureEndsAt)
 
 	winnerInitialBalance := 1000
 	winnerID := createTestUser(t, pool, winnerInitialBalance, 0)
@@ -486,6 +486,11 @@ func TestFinishLot_ExpiredWithBids(t *testing.T) {
 	winningAmount := 250
 	if err := service.bid(ctx, lotID, winnerID, winningAmount); err != nil {
 		t.Fatalf("winner bid failed: %v", err)
+	}
+
+	// Expire the lot
+	if _, err := pool.Exec(ctx, "UPDATE lots SET ends_at = now() - interval '15 seconds' WHERE id = $1", lotID); err != nil {
+		t.Fatalf("failed to expire lot: %v", err)
 	}
 
 	// Finish the lot
@@ -928,8 +933,8 @@ func TestFinishLot_WinnerExactBalance(t *testing.T) {
 	sellerID := createTestUser(t, pool, 1000, 0)
 	itemID := createTestItem(t, pool, sellerID)
 
-	pastEndsAt := time.Now().Add(-5 * time.Minute - time.Duration(atomic.AddInt64(&lotEndsAtOffset, 1))*time.Second)
-	lotID := createTestLot(t, pool, sellerID, itemID, "active", 100, 10, &pastEndsAt)
+	futureEndsAt := time.Now().Add(1 * time.Hour)
+	lotID := createTestLot(t, pool, sellerID, itemID, "active", 100, 10, &futureEndsAt)
 
 	// Winner has balance = 250, hold = 0
 	winnerID := createTestUser(t, pool, 250, 0)
@@ -948,7 +953,10 @@ func TestFinishLot_WinnerExactBalance(t *testing.T) {
 		t.Fatalf("precondition failed: balance=%d, hold=%d, expected 250, 250", bal, hold)
 	}
 
-	// Lot expires (ends_at in the past). Call finishLot
+	// Expire the lot (ends_at in the past). Call finishLot
+	if _, err := pool.Exec(ctx, "UPDATE lots SET ends_at = now() - interval '15 seconds' WHERE id = $1", lotID); err != nil {
+		t.Fatalf("failed to expire lot: %v", err)
+	}
 	err := service.finishLot(ctx, lotID)
 	if err != nil {
 		t.Errorf("finishLot failed due to balance vs hold deduction ordering: %v", err)
@@ -1013,6 +1021,239 @@ func TestActivateLot_SameEndsAtCollision(t *testing.T) {
 		t.Errorf("database index collision occurred on ux_lot_item_active: %v", err2)
 	} else {
 		t.Logf("both lots successfully activated at the same ends_at")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 15. AdminCancelLot: Active lot with bids
+// -----------------------------------------------------------------------------
+func TestAdminCancelLot_ActiveWithBids(t *testing.T) {
+	service, pool, _ := setupLotTest(t)
+	ctx := context.Background()
+
+	sellerID := createTestUser(t, pool, 1000, 0)
+	itemID := createTestItem(t, pool, sellerID)
+	futureEndsAt := time.Now().Add(1 * time.Hour)
+	lotID := createTestLot(t, pool, sellerID, itemID, "active", 100, 10, &futureEndsAt)
+
+	bidderID := createTestUser(t, pool, 500, 0)
+	bidAmount := 150
+	if err := service.bid(ctx, lotID, bidderID, bidAmount); err != nil {
+		t.Fatalf("bid failed: %v", err)
+	}
+
+	// Verify bidder has hold = 150
+	var preHold int
+	if err := pool.QueryRow(ctx, "SELECT hold FROM users WHERE id = $1", bidderID).Scan(&preHold); err != nil {
+		t.Fatalf("failed to query bidder hold: %v", err)
+	}
+	if preHold != bidAmount {
+		t.Fatalf("expected pre-hold %d, got %d", bidAmount, preHold)
+	}
+
+	// Admin calls AdminCancelLot
+	if err := service.AdminCancelLot(ctx, lotID); err != nil {
+		t.Fatalf("AdminCancelLot failed: %v", err)
+	}
+
+	// Assert: lot status becomes cancelled
+	var status string
+	if err := pool.QueryRow(ctx, "SELECT status FROM lots WHERE id = $1", lotID).Scan(&status); err != nil {
+		t.Fatalf("failed to query lot status: %v", err)
+	}
+	if status != "cancelled" {
+		t.Errorf("expected lot status 'cancelled', got '%s'", status)
+	}
+
+	// Assert: leading bidder's hold is refunded (decreased by bid amount back to 0)
+	var postBal, postHold int
+	if err := pool.QueryRow(ctx, "SELECT balance, hold FROM users WHERE id = $1", bidderID).Scan(&postBal, &postHold); err != nil {
+		t.Fatalf("failed to query bidder after cancel: %v", err)
+	}
+	if postHold != 0 {
+		t.Errorf("expected bidder hold refunded to 0, got %d", postHold)
+	}
+	if postBal != 500 {
+		t.Errorf("expected bidder balance 500, got %d", postBal)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 16. AdminCancelLot: Non-active statuses
+// -----------------------------------------------------------------------------
+func TestAdminCancelLot_NonActiveStatuses(t *testing.T) {
+	service, pool, _ := setupLotTest(t)
+	ctx := context.Background()
+
+	// Admin can cancel lots in draft, pending_review, approved
+	cancellableStatuses := []Status{"draft", "pending_review", "approved"}
+	for _, status := range cancellableStatuses {
+		sellerID := createTestUser(t, pool, 1000, 0)
+		itemID := createTestItem(t, pool, sellerID)
+		lotID := createTestLot(t, pool, sellerID, itemID, status, 100, 10, nil)
+
+		if err := service.AdminCancelLot(ctx, lotID); err != nil {
+			t.Errorf("AdminCancelLot failed for status %q: %v", status, err)
+		} else {
+			var dbStatus string
+			_ = pool.QueryRow(ctx, "SELECT status FROM lots WHERE id = $1", lotID).Scan(&dbStatus)
+			if dbStatus != "cancelled" {
+				t.Errorf("expected status 'cancelled' for %q lot, got %q", status, dbStatus)
+			}
+		}
+	}
+
+	// Admin CANNOT cancel lots in finished or already cancelled status (should return error)
+	nonCancellableStatuses := []Status{"finished", "cancelled"}
+	for _, status := range nonCancellableStatuses {
+		sellerID := createTestUser(t, pool, 1000, 0)
+		itemID := createTestItem(t, pool, sellerID)
+		lotID := createTestLot(t, pool, sellerID, itemID, status, 100, 10, nil)
+
+		if err := service.AdminCancelLot(ctx, lotID); err == nil {
+			t.Errorf("AdminCancelLot succeeded for status %q, expected error", status)
+		} else {
+			t.Logf("AdminCancelLot correctly failed for status %q: %v", status, err)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 17. cancelLot: Seller cancels lot in pending_review
+// -----------------------------------------------------------------------------
+func TestCancelLot_SellerPendingReview(t *testing.T) {
+	service, pool, _ := setupLotTest(t)
+	ctx := context.Background()
+
+	sellerID := createTestUser(t, pool, 1000, 0)
+	itemID := createTestItem(t, pool, sellerID)
+	lotID := createTestLot(t, pool, sellerID, itemID, "pending_review", 100, 10, nil)
+
+	err := service.cancelLot(ctx, lotID, sellerID)
+	var dbStatus string
+	_ = pool.QueryRow(ctx, "SELECT status FROM lots WHERE id = $1", lotID).Scan(&dbStatus)
+
+	if err != nil {
+		t.Logf("Seller cannot cancel lot in pending_review: %v (lot status: %s)", err, dbStatus)
+		if dbStatus != "pending_review" {
+			t.Errorf("expected status to remain 'pending_review', got %q", dbStatus)
+		}
+	} else {
+		t.Logf("Seller successfully cancelled lot in pending_review")
+		if dbStatus != "cancelled" {
+			t.Errorf("expected status 'cancelled', got %q", dbStatus)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 18. bid: Future scheduled lot
+// -----------------------------------------------------------------------------
+func TestBid_FutureScheduledLot(t *testing.T) {
+	service, pool, _ := setupLotTest(t)
+	ctx := context.Background()
+
+	sellerID := createTestUser(t, pool, 1000, 0)
+	itemID := createTestItem(t, pool, sellerID)
+
+	futureStart := time.Now().Add(2 * time.Hour)
+	futureEnd := time.Now().Add(24 * time.Hour)
+
+	var lotID int64
+	err := pool.QueryRow(ctx, `
+		INSERT INTO lots (seller_id, item_id, status, start_amount, min_step, title, description, started_at, ends_at)
+		VALUES ($1, $2, 'active', 100, 10, 'Future Lot', '{}'::jsonb, $3, $4)
+		RETURNING id
+	`, sellerID, itemID, futureStart, futureEnd).Scan(&lotID)
+	if err != nil {
+		t.Fatalf("failed to insert future scheduled lot: %v", err)
+	}
+
+	bidderID := createTestUser(t, pool, 1000, 0)
+	err = service.bid(ctx, lotID, bidderID, 100)
+	if err == nil {
+		t.Errorf("bid on future scheduled lot succeeded before start time; expected rejection")
+	} else {
+		t.Logf("bid on future scheduled lot rejected as expected: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 19. bid: Deleted previous bidder
+// -----------------------------------------------------------------------------
+func TestBid_DeletedPreviousBidder(t *testing.T) {
+	service, pool, _ := setupLotTest(t)
+	ctx := context.Background()
+
+	sellerID := createTestUser(t, pool, 1000, 0)
+	itemID := createTestItem(t, pool, sellerID)
+	futureEnd := time.Now().Add(2 * time.Hour)
+	lotID := createTestLot(t, pool, sellerID, itemID, "active", 100, 10, &futureEnd)
+
+	user1ID := createTestUser(t, pool, 1000, 0)
+	user2ID := createTestUser(t, pool, 1000, 0)
+
+	// User 1 places bid of 100
+	if err := service.bid(ctx, lotID, user1ID, 100); err != nil {
+		t.Fatalf("user 1 bid failed: %v", err)
+	}
+
+	// User 1 is soft-deleted
+	_, err := pool.Exec(ctx, "UPDATE users SET deleted_at = now() WHERE id = $1", user1ID)
+	if err != nil {
+		t.Fatalf("failed to soft-delete user 1: %v", err)
+	}
+
+	// User 2 attempts to place an outbid of 120
+	err = service.bid(ctx, lotID, user2ID, 120)
+	if err != nil {
+		t.Errorf("user 2 outbid failed when previous bidder is deleted: %v", err)
+	} else {
+		t.Logf("user 2 outbid succeeded when previous bidder is deleted")
+		var u2Hold int
+		_ = pool.QueryRow(ctx, "SELECT hold FROM users WHERE id = $1", user2ID).Scan(&u2Hold)
+		if u2Hold != 120 {
+			t.Errorf("expected user 2 hold 120, got %d", u2Hold)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 20. finishLot: Deleted winner
+// -----------------------------------------------------------------------------
+func TestFinishLot_DeletedWinner(t *testing.T) {
+	service, pool, _ := setupLotTest(t)
+	ctx := context.Background()
+
+	sellerID := createTestUser(t, pool, 1000, 0)
+	itemID := createTestItem(t, pool, sellerID)
+	futureEnd := time.Now().Add(2 * time.Hour)
+	lotID := createTestLot(t, pool, sellerID, itemID, "active", 100, 10, &futureEnd)
+
+	user1ID := createTestUser(t, pool, 1000, 0)
+	winningAmount := 150
+	if err := service.bid(ctx, lotID, user1ID, winningAmount); err != nil {
+		t.Fatalf("user 1 bid failed: %v", err)
+	}
+
+	// User 1 is soft-deleted
+	_, err := pool.Exec(ctx, "UPDATE users SET deleted_at = now() WHERE id = $1", user1ID)
+	if err != nil {
+		t.Fatalf("failed to soft-delete user 1: %v", err)
+	}
+
+	// Expire lot
+	_, err = pool.Exec(ctx, "UPDATE lots SET ends_at = now() - interval '15 seconds' WHERE id = $1", lotID)
+	if err != nil {
+		t.Fatalf("failed to expire lot: %v", err)
+	}
+
+	// Finish lot
+	err = service.finishLot(ctx, lotID)
+	if err != nil {
+		t.Errorf("finishLot failed for deleted winner: %v", err)
+	} else {
+		t.Logf("finishLot succeeded for deleted winner")
 	}
 }
 
