@@ -7,7 +7,10 @@ import (
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
 )
 
-var ErrUserDeleted = apperr.NewAppErrorString("user account is deleted", -4)
+var (
+	ErrUserDeleted    = apperr.NewAppErrorString("user account is deleted", -4)
+	ErrSessionRevoked = apperr.NewAppErrorString("session is revoked", -4)
+)
 
 type User struct {
 	ID        uuid.UUID  `db:"id" json:"id"`

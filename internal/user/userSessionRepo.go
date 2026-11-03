@@ -20,6 +20,20 @@ func (r *Repo) newToken(ctx context.Context, uid uuid.UUID, refreshToken []byte,
 	return nil
 }
 
+func (r *Repo) findToken(ctx context.Context, refreshToken []byte) (Session, error) {
+	var session Session
+
+	row, err := r.db.Query(ctx, "SELECT * FROM user_sessions WHERE refresh_token_hash = $1", refreshToken)
+	if err != nil {
+		return session, fmt.Errorf("userSessionRepo.findToken: %w", storage.ErrRepo(err))
+	}
+	session, err = pgx.CollectExactlyOneRow(row, pgx.RowToStructByName[Session])
+	if err != nil {
+		return session, fmt.Errorf("userSessionRepo.findToken: %w", storage.ErrRepo(err))
+	}
+	return session, nil
+}
+
 func (r *Repo) findCurrentToken(ctx context.Context, refreshToken []byte) (Session, error) {
 	var session Session
 
@@ -72,7 +86,7 @@ func (r *Repo) revokedToken(ctx context.Context, tokenID int64, uid uuid.UUID) e
 }
 
 func (r *Repo) deleteAllSessions(ctx context.Context, uid uuid.UUID) error {
-	_, err := r.db.Exec(ctx, "DELETE FROM user_sessions WHERE user_id = $1", uid)
+	_, err := r.db.Exec(ctx, "UPDATE user_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", uid)
 	if err != nil {
 		return fmt.Errorf("userSessionRepo.deleteAllSessions: %w", storage.ErrRepo(err))
 	}
@@ -85,6 +99,7 @@ func (r *Repo) updateToken(ctx context.Context, refreshToken []byte) (Session, e
 		`UPDATE user_sessions 
 		SET expires_at = $1 
 		WHERE refresh_token_hash = $2 
+		  AND revoked_at IS NULL
 		  AND expires_at > now() 
 		  AND expires_at - INTERVAL '7 days' < now()`,
 		time.Now().UTC().Add(time.Duration(cfg.Cfg.ExpiredRefreshToken)*time.Hour*24),

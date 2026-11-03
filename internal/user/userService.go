@@ -19,6 +19,7 @@ import (
 
 	"github.com/ArtemChadaev/Auction/cmd/apperr"
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
+	"github.com/ArtemChadaev/Auction/cmd/storage"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
 	"github.com/ArtemChadaev/Auction/cmd/valkey"
 	"github.com/jackc/pgx/v5"
@@ -164,13 +165,16 @@ func (s *Service) authPassword(ctx context.Context, email string, password strin
 
 func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, error) {
 	sha := sha256.Sum256([]byte(refresh))
-	userSession, err := s.repo.findCurrentToken(ctx, sha[:])
+	userSession, err := s.repo.findToken(ctx, sha[:])
 	if err != nil {
 		return Tokens{}, fmt.Errorf("userService.authRefresh: %w", err)
 	}
 
 	email, role, deletedAt, err := s.repo.getEmailRoleByID(ctx, userSession.UserID)
 	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return Tokens{}, fmt.Errorf("userService.authRefresh: %w", ErrUserDeleted)
+		}
 		return Tokens{}, fmt.Errorf("userService.authRefresh: %w", err)
 	}
 	if deletedAt != nil {
@@ -179,6 +183,9 @@ func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, erro
 			_ = SetUserDeletedCache(ctx, s.valkey, userSession.UserID, true)
 		}
 		return Tokens{}, fmt.Errorf("userService.authRefresh: %w", ErrUserDeleted)
+	}
+	if userSession.RevokedAt != nil {
+		return Tokens{}, fmt.Errorf("userService.authRefresh: %w", ErrSessionRevoked)
 	}
 
 	// Токен закончится раньше чем через 7 дней

@@ -266,8 +266,8 @@ func (h *Handler) loginToken(w http.ResponseWriter, r *http.Request) {
 	}
 	tokens, err := h.service.authRefresh(r.Context(), cookie.Value)
 	if err != nil {
-		if errors.Is(err, ErrUserDeleted) {
-			slog.DebugContext(r.Context(), "loginToken: user is deleted", slog.String("error", err.Error()))
+		if errors.Is(err, ErrUserDeleted) || errors.Is(err, ErrSessionRevoked) {
+			slog.DebugContext(r.Context(), "loginToken: user is deleted or session revoked", slog.String("error", err.Error()))
 			httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
 		} else if errors.Is(err, storage.ErrNotFound) {
 			httpx.WriteResponse(w, httpx.ErrRespNotFound)
