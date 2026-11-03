@@ -125,3 +125,12 @@ func (r *Repo) hasHash(ctx context.Context, hash string) (bool, error) {
 	}
 	return exists, nil
 }
+
+// deleteDraftAndApprovedLots удаляет все лоты продавца по указанному предмету со статусом draft и approved
+func (r *Repo) deleteDraftAndApprovedLots(ctx context.Context, sellerID uuid.UUID, itemID int64) error {
+	_, err := r.db.Exec(ctx, "DELETE FROM lots WHERE seller_id = $1 AND item_id = $2 AND status IN ('draft', 'approved')", sellerID, itemID)
+	if err != nil {
+		return fmt.Errorf("itemRepo.deleteDraftAndApprovedLots: %w", storage.ErrRepo(err))
+	}
+	return nil
+}

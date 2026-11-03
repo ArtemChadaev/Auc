@@ -542,7 +542,9 @@ type giftItemReq struct {
 // @Produce json
 // @Param input body giftItemReq true "Параметры подарка"
 // @Success 202 {object} httpx.Response
+// @Failure 400 {object} httpx.Response "Некорректные параметры или предмет в активном/на модерации лоте"
 // @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 403 {object} httpx.Response "Нет прав на передачу предмета"
 // @Failure 404 {object} httpx.Response "Предмет не найден"
 // @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
 // @Router /api/item/gift [post]
@@ -560,14 +562,26 @@ func (h *Handler) giftItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.ItemID <= 0 || req.NewOwner == uuid.Nil() {
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		return
+	}
+
 	err = h.service.giftItem(r.Context(), uid, req.NewOwner, req.ItemID, req.Description)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			httpx.WriteResponse(w, httpx.ErrRespNotFound)
-		} else {
-			apperr.Log(r.Context(), "", err)
-			httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+			return
 		}
+		if errors.Is(err, apperr.ErrForbidden) {
+			httpx.WriteResponse(w, httpx.ErrForbidden)
+			return
+		}
+		apperr.Log(r.Context(), "itemHandler.giftItem", err)
+		httpx.WriteResponse(w, httpx.Response{
+			Code:  http.StatusBadRequest,
+			Error: err.Error(),
+		})
 		return
 	}
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusAccepted})

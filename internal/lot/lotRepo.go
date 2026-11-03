@@ -230,7 +230,7 @@ func (r *Repo) getByIdForUpdate(ctx context.Context, id int64) (Lot, error) {
 	row, err := r.db.Query(ctx, `
 		SELECT id, seller_id, item_id, status, winner_id, start_amount, min_step, finish_amount, title, description, created_at, started_at, ends_at, finished_at 
 		FROM lots 
-		WHERE id = $1 AND status = 'active' AND (ends_at IS NULL OR ends_at > now())
+		WHERE id = $1 AND status = 'active' AND ends_at IS NOT NULL AND ends_at > now() AND started_at IS NOT NULL AND started_at <= now()
 		FOR UPDATE`, id)
 	if err != nil {
 		return lot, fmt.Errorf("lotRepo.getByIdForUpdate: %w", storage.ErrRepo(err))
@@ -288,7 +288,7 @@ func (r *Repo) getLotBids(ctx context.Context, idLot int64) ([]Bid, error) {
 
 func (r *Repo) getUserForUpdate(ctx context.Context, uid uuid.UUID) (user.User, error) {
 	var u user.User
-	row := r.db.QueryRow(ctx, "SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", uid)
+	row := r.db.QueryRow(ctx, "SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at FROM users WHERE id = $1 FOR UPDATE", uid)
 	err := row.Scan(&u.ID, &u.Name, &u.AvatarID, &u.Email, &u.DeletedAt, &u.Balance, &u.Hold, &u.CreatedAt)
 	if err != nil {
 		return u, fmt.Errorf("userRepo.getUser: %w", storage.ErrRepo(err))

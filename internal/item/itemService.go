@@ -49,6 +49,13 @@ func (s *Service) getMyItems(ctx context.Context, uid uuid.UUID) ([]Item, error)
 
 // newOwner смена владельца
 func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID int64, lotID *int64, description *string) error {
+	if itemID <= 0 || newOwner == uuid.Nil() {
+		return fmt.Errorf("itemService.newOwner: invalid itemID or newOwner")
+	}
+	if uid == newOwner {
+		return fmt.Errorf("itemService.newOwner: new owner is same as current owner")
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("itemService.newOwner: %w", err)
@@ -65,6 +72,16 @@ func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID 
 		return fmt.Errorf("itemService.newOwner: %w", apperr.ErrForbidden)
 	}
 
+	// Проверяем, что предмет не находится в активном или находящемся на модерации лоте
+	var activeOrPendingExists bool
+	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM lots WHERE item_id = $1 AND status IN ('active', 'pending_review'))", itemID).Scan(&activeOrPendingExists)
+	if err != nil {
+		return fmt.Errorf("itemService.newOwner.checkActiveLot: %w", err)
+	}
+	if activeOrPendingExists {
+		return fmt.Errorf("itemService.newOwner: cannot transfer item that is in an active or pending review lot")
+	}
+
 	err = txRepo.newOwner(ctx, newOwner, itemID)
 	if err != nil {
 		return fmt.Errorf("itemService.newOwner: %w", err)
@@ -73,6 +90,11 @@ func (s *Service) newOwner(ctx context.Context, uid, newOwner uuid.UUID, itemID 
 	err = txRepo.newHistory(ctx, itemID, oldOwner, newOwner, lotID, description)
 	if err != nil {
 		return fmt.Errorf("itemService.newOwner: %w", err)
+	}
+
+	// После передачи удаляем все лоты старого владельца с этим предметом со статусом draft и approved
+	if err = txRepo.deleteDraftAndApprovedLots(ctx, oldOwner, itemID); err != nil {
+		return fmt.Errorf("itemService.newOwner.deleteLots: %w", err)
 	}
 
 	if err = tx.Commit(ctx); err != nil {
@@ -112,14 +134,14 @@ func (s *Service) AdminTransferItem(ctx context.Context, itemID int64, newOwner 
 	defer tx.Rollback(ctx)
 	txRepo := s.repo.withTx(tx)
 
-	// Проверяем, что предмет не находится в активном аукционе
-	var activeLotExists bool
-	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM lots WHERE item_id = $1 AND status = 'active')", itemID).Scan(&activeLotExists)
+	// Проверяем, что предмет не находится в активном, одобренном или находящемся на модерации лоте
+	var lotExists bool
+	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM lots WHERE item_id = $1 AND status IN ('active', 'approved', 'pending_review'))", itemID).Scan(&lotExists)
 	if err != nil {
-		return fmt.Errorf("itemService.AdminTransferItem.checkActiveLot: %w", err)
+		return fmt.Errorf("itemService.AdminTransferItem.checkLots: %w", err)
 	}
-	if activeLotExists {
-		return fmt.Errorf("itemService.AdminTransferItem: cannot transfer item that is in an active lot")
+	if lotExists {
+		return fmt.Errorf("itemService.AdminTransferItem: cannot transfer item that is in an active, approved, or pending review lot")
 	}
 
 	oldOwner, err := txRepo.getOwnerForUpdate(ctx, itemID)
@@ -136,6 +158,11 @@ func (s *Service) AdminTransferItem(ctx context.Context, itemID int64, newOwner 
 
 	if err = txRepo.newHistory(ctx, itemID, oldOwner, newOwner, nil, &description); err != nil {
 		return fmt.Errorf("itemService.AdminTransferItem.newHistory: %w", err)
+	}
+
+	// После передачи удаляем все лоты старого владельца с этим предметом со статусом draft и approved
+	if err = txRepo.deleteDraftAndApprovedLots(ctx, oldOwner, itemID); err != nil {
+		return fmt.Errorf("itemService.AdminTransferItem.deleteLots: %w", err)
 	}
 
 	if err = tx.Commit(ctx); err != nil {
