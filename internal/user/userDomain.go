@@ -3,7 +3,11 @@ package user
 import (
 	"time"
 	"uuid"
+
+	"github.com/ArtemChadaev/Auction/cmd/apperr"
 )
+
+var ErrUserDeleted = apperr.NewAppErrorString("user account is deleted", -4)
 
 type User struct {
 	ID        uuid.UUID  `db:"id" json:"id"`

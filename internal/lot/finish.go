@@ -203,7 +203,7 @@ func (r *Repo) winner(ctx context.Context, idLot int64) (uuid.UUID, int, error) 
 
 // changeBalance изменяет баланс пользователя на changeBalance (+увеличить, -уменьшить)
 func (r *Repo) changeBalance(ctx context.Context, uid uuid.UUID, changeBalance int) error {
-	res, err := r.db.Exec(ctx, "UPDATE users SET balance = balance + $1 WHERE id = $2 AND deleted_at IS NULL", changeBalance, uid)
+	res, err := r.db.Exec(ctx, "UPDATE users SET balance = balance + $1 WHERE id = $2 ", changeBalance, uid)
 	if err != nil {
 		return fmt.Errorf("lotRepo.changeBalance: %w", storage.ErrRepo(err))
 	}

@@ -55,7 +55,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 
 	tokens, err := h.service.authPassword(r.Context(), req.Email, req.Pass, getDevice(r))
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, apperr.ErrUnauthorized) {
+		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, apperr.ErrUnauthorized) || errors.Is(err, ErrUserDeleted) {
 			slog.DebugContext(r.Context(), "login: invalid auth", slog.String("error", err.Error()))
 			httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
 		} else {
@@ -253,7 +253,7 @@ func (h *Handler) findRefresh(w http.ResponseWriter, r *http.Request) {
 // @Tags auth
 // @Produce json
 // @Success 200 {object} httpx.Response{data=tokenResponds}
-// @Failure 401 {object} httpx.Response "Отсутствует или невалидный cookie"
+// @Failure 401 {object} httpx.Response "Отсутствует или невалидный cookie / пользователь удален"
 // @Failure 404 {object} httpx.Response "Сессия не найдена"
 // @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
 // @Router /api/auth/refresh [post]
@@ -266,7 +266,10 @@ func (h *Handler) loginToken(w http.ResponseWriter, r *http.Request) {
 	}
 	tokens, err := h.service.authRefresh(r.Context(), cookie.Value)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, ErrUserDeleted) {
+			slog.DebugContext(r.Context(), "loginToken: user is deleted", slog.String("error", err.Error()))
+			httpx.WriteResponse(w, httpx.ErrRespInvalidAuth)
+		} else if errors.Is(err, storage.ErrNotFound) {
 			httpx.WriteResponse(w, httpx.ErrRespNotFound)
 		} else {
 			apperr.Log(r.Context(), "loginToken.authRefresh", err)

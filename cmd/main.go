@@ -99,8 +99,8 @@ func main() {
 	// http
 	mux := http.NewServeMux()
 	globalChain := alice.New(middleware.Logger, middleware.GlobalRateLimit(vk, 300, 100), middleware.MaxBodySize(5<<20))
-	authChain := alice.New(middleware.AuthAccessToken, middleware.Idempotency(vk))
-	adminChain := alice.New(middleware.AuthAdmin, middleware.Idempotency(vk))
+	authChain := alice.New(middleware.AuthAccessToken(vk, pool), middleware.Idempotency(vk))
+	adminChain := alice.New(middleware.AuthAdmin(vk, pool), middleware.Idempotency(vk))
 
 	// user
 	userService := user.NewService(user.NewRepo(pool), pool, photosS3, vk)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/storage"
@@ -22,15 +23,21 @@ func (r *Repo) WithTx(tx storage.DBTX) *Repo {
 	return &Repo{db: tx}
 }
 
-func (r *Repo) login(ctx context.Context, email string) (uuid.UUID, string, string, error) {
+func (r *Repo) login(ctx context.Context, email string) (uuid.UUID, string, string, *time.Time, error) {
 	var id uuid.UUID
 	var password, role string
-	row := r.db.QueryRow(ctx, "SELECT id, password_hash, role FROM users WHERE email = lower($1) AND deleted_at IS NULL", email)
-	err := row.Scan(&id, &password, &role)
+	var deletedAt *time.Time
+	row := r.db.QueryRow(ctx, `
+		SELECT id, password_hash, role, deleted_at 
+		FROM users 
+		WHERE email = lower($1) 
+		ORDER BY (deleted_at IS NULL) DESC, created_at DESC 
+		LIMIT 1`, email)
+	err := row.Scan(&id, &password, &role, &deletedAt)
 	if err != nil {
-		return id, password, role, fmt.Errorf("userRepo.login: %w", storage.ErrRepo(err))
+		return id, password, role, nil, fmt.Errorf("userRepo.login: %w", storage.ErrRepo(err))
 	}
-	return id, password, role, nil
+	return id, password, role, deletedAt, nil
 }
 
 func (r *Repo) register(ctx context.Context, id uuid.UUID, name, email, password string) error {
@@ -41,19 +48,20 @@ func (r *Repo) register(ctx context.Context, id uuid.UUID, name, email, password
 	return nil
 }
 
-func (r *Repo) getEmailRoleByID(ctx context.Context, uid uuid.UUID) (string, string, error) {
+func (r *Repo) getEmailRoleByID(ctx context.Context, uid uuid.UUID) (string, string, *time.Time, error) {
 	var email, role string
-	row := r.db.QueryRow(ctx, "SELECT email, role FROM users WHERE id = $1 AND deleted_at IS NULL", uid)
-	err := row.Scan(&email, &role)
+	var deletedAt *time.Time
+	row := r.db.QueryRow(ctx, "SELECT email, role, deleted_at FROM users WHERE id = $1 ", uid)
+	err := row.Scan(&email, &role, &deletedAt)
 	if err != nil {
-		return "", "", fmt.Errorf("userRepo.getEmailByID: %w", storage.ErrRepo(err))
+		return "", "", nil, fmt.Errorf("userRepo.getEmailByID: %w", storage.ErrRepo(err))
 	}
-	return email, role, nil
+	return email, role, deletedAt, nil
 }
 
 func (r *Repo) getUser(ctx context.Context, uid uuid.UUID) (User, error) {
 	var user User
-	row := r.db.QueryRow(ctx, "SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at FROM users WHERE id = $1 AND deleted_at IS NULL", uid)
+	row := r.db.QueryRow(ctx, "SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at FROM users WHERE id = $1 ", uid)
 	err := row.Scan(&user.ID, &user.Name, &user.AvatarID, &user.Email, &user.DeletedAt, &user.Balance, &user.Hold, &user.CreatedAt)
 	if err != nil {
 		return user, fmt.Errorf("userRepo.getUser: %w", storage.ErrRepo(err))
@@ -62,7 +70,7 @@ func (r *Repo) getUser(ctx context.Context, uid uuid.UUID) (User, error) {
 }
 
 func (r *Repo) patchUserName(ctx context.Context, uid uuid.UUID, name string) error {
-	res, err := r.db.Exec(ctx, "UPDATE users SET name = $1 WHERE id = $2 AND deleted_at IS NULL", name, uid)
+	res, err := r.db.Exec(ctx, "UPDATE users SET name = $1 WHERE id = $2 ", name, uid)
 	if err != nil {
 		return fmt.Errorf("userRepo.patchUserName: %w", storage.ErrRepo(err))
 	}
@@ -73,7 +81,7 @@ func (r *Repo) patchUserName(ctx context.Context, uid uuid.UUID, name string) er
 }
 
 func (r *Repo) deleteUser(ctx context.Context, uid uuid.UUID) error {
-	res, err := r.db.Exec(ctx, "UPDATE users SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL", uid)
+	res, err := r.db.Exec(ctx, "UPDATE users SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL ", uid)
 	if err != nil {
 		return fmt.Errorf("userRepo.deleteUser: %w", storage.ErrRepo(err))
 	}
@@ -100,7 +108,7 @@ func (r *Repo) insertS3Hash(ctx context.Context, hash string) (uuid.UUID, bool, 
 }
 
 func (r *Repo) updateAvatar(ctx context.Context, uid uuid.UUID, avatarID uuid.UUID) error {
-	res, err := r.db.Exec(ctx, "UPDATE users SET avatar_id = $1 WHERE id = $2 AND deleted_at IS NULL", avatarID, uid)
+	res, err := r.db.Exec(ctx, "UPDATE users SET avatar_id = $1 WHERE id = $2 ", avatarID, uid)
 	if err != nil {
 		return fmt.Errorf("userRepo.updateAvatar: %w", storage.ErrRepo(err))
 	}
@@ -112,7 +120,7 @@ func (r *Repo) updateAvatar(ctx context.Context, uid uuid.UUID, avatarID uuid.UU
 
 func (r *Repo) checkUserByEmail(ctx context.Context, email string) (bool, error) {
 	var exists int
-	err := r.db.QueryRow(ctx, "SELECT 1 FROM users WHERE email = $1 AND deleted_at IS NULL", email).Scan(&exists)
+	err := r.db.QueryRow(ctx, "SELECT 1 FROM users WHERE email = $1 ", email).Scan(&exists)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
@@ -123,7 +131,7 @@ func (r *Repo) checkUserByEmail(ctx context.Context, email string) (bool, error)
 }
 
 func (r *Repo) setAdmin(ctx context.Context, uid uuid.UUID) error {
-	res, err := r.db.Exec(ctx, "UPDATE users SET role = 'admin' WHERE id = $1 AND deleted_at IS NULL", uid)
+	res, err := r.db.Exec(ctx, "UPDATE users SET role = 'admin' WHERE id = $1 ", uid)
 	if err != nil {
 		return fmt.Errorf("userRepo.setAdmin: %w", storage.ErrRepo(err))
 	}
@@ -135,7 +143,7 @@ func (r *Repo) setAdmin(ctx context.Context, uid uuid.UUID) error {
 
 func (r *Repo) changeBalance(ctx context.Context, uid uuid.UUID, changeBalance int) (int, error) {
 	var newBalance int
-	row := r.db.QueryRow(ctx, "UPDATE users SET balance = balance + $1 WHERE id = $2 AND deleted_at IS NULL RETURNING balance", changeBalance, uid)
+	row := r.db.QueryRow(ctx, "UPDATE users SET balance = balance + $1 WHERE id = $2  RETURNING balance", changeBalance, uid)
 	if err := row.Scan(&newBalance); err != nil {
 		return 0, fmt.Errorf("userRepo.changeBalance: %w", storage.ErrRepo(err))
 	}
@@ -178,9 +186,10 @@ func (r *Repo) getLedgerEntries(ctx context.Context, uid uuid.UUID) ([]LedgerEnt
 	}
 	return entries, nil
 }
+
 func (r *Repo) getUserForUpdate(ctx context.Context, uid uuid.UUID) (User, error) {
 	var user User
-	row := r.db.QueryRow(ctx, "SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at, role FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", uid)
+	row := r.db.QueryRow(ctx, "SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at, role FROM users WHERE id = $1  FOR UPDATE", uid)
 	err := row.Scan(&user.ID, &user.Name, &user.AvatarID, &user.Email, &user.DeletedAt, &user.Balance, &user.Hold, &user.CreatedAt, &user.Role)
 	if err != nil {
 		return user, fmt.Errorf("userRepo.getUserForUpdate: %w", storage.ErrRepo(err))

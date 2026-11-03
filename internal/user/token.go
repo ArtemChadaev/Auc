@@ -19,6 +19,10 @@ type Tokens struct {
 	RefreshToken string
 }
 
+func GenerateAccessToken(email string, uid uuid.UUID, role string) (string, error) {
+	return generateAccessToken(email, uid, role)
+}
+
 func generateAccessToken(email string, uid uuid.UUID, role string) (string, error) {
 	claims := jwt.MapClaims{
 		"iss":  cfg.Cfg.Domain,

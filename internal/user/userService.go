@@ -120,15 +120,26 @@ func (s *Service) register(ctx context.Context, uid *uuid.UUID, name string, ema
 	if err = s.repo.newToken(ctx, *uid, sha[:], device); err != nil {
 		return tokens, fmt.Errorf("userService.register: %w", err)
 	}
+
+	if s.valkey != nil && s.valkey.Raw() != nil {
+		_ = SetUserDeletedCache(ctx, s.valkey, *uid, false)
+	}
+
 	return tokens, nil
 }
 
 func (s *Service) authPassword(ctx context.Context, email string, password string, device Device) (Tokens, error) {
 	var tokens Tokens
 
-	uid, passHash, role, err := s.repo.login(ctx, email)
+	uid, passHash, role, deletedAt, err := s.repo.login(ctx, email)
 	if err != nil {
 		return tokens, fmt.Errorf("userService.authPassword: %w", err)
+	}
+	if deletedAt != nil {
+		if s.valkey != nil && s.valkey.Raw() != nil {
+			_ = SetUserDeletedCache(ctx, s.valkey, uid, true)
+		}
+		return tokens, fmt.Errorf("userService.authPassword: %w", ErrUserDeleted)
 	}
 	if err = checkPassword(passHash, password); err != nil {
 		return tokens, fmt.Errorf("userService.authPassword: %w", err)
@@ -143,6 +154,11 @@ func (s *Service) authPassword(ctx context.Context, email string, password strin
 	if err = s.repo.newToken(ctx, uid, sha[:], device); err != nil {
 		return tokens, fmt.Errorf("userService.authPassword: %w", err)
 	}
+
+	if s.valkey != nil && s.valkey.Raw() != nil {
+		_ = SetUserDeletedCache(ctx, s.valkey, uid, false)
+	}
+
 	return tokens, nil
 }
 
@@ -152,20 +168,34 @@ func (s *Service) authRefresh(ctx context.Context, refresh string) (Tokens, erro
 	if err != nil {
 		return Tokens{}, fmt.Errorf("userService.authRefresh: %w", err)
 	}
+
+	email, role, deletedAt, err := s.repo.getEmailRoleByID(ctx, userSession.UserID)
+	if err != nil {
+		return Tokens{}, fmt.Errorf("userService.authRefresh: %w", err)
+	}
+	if deletedAt != nil {
+		_ = s.repo.deleteAllSessions(ctx, userSession.UserID)
+		if s.valkey != nil && s.valkey.Raw() != nil {
+			_ = SetUserDeletedCache(ctx, s.valkey, userSession.UserID, true)
+		}
+		return Tokens{}, fmt.Errorf("userService.authRefresh: %w", ErrUserDeleted)
+	}
+
 	// Токен закончится раньше чем через 7 дней
 	if userSession.ExpiresAt.Before(time.Now().UTC().Add(7 * 24 * time.Hour)) {
 		if userSession, err = s.repo.updateToken(ctx, sha[:]); err != nil {
 			return Tokens{}, fmt.Errorf("userService.authRefresh: %w", err)
 		}
 	}
-	email, role, err := s.repo.getEmailRoleByID(ctx, userSession.UserID)
-	if err != nil {
-		return Tokens{}, fmt.Errorf("userService.authRefresh: %w", err)
-	}
 	accessToken, err := generateAccessToken(email, userSession.UserID, role)
 	if err != nil {
 		return Tokens{}, fmt.Errorf("userService.authRefresh: %w", err)
 	}
+
+	if s.valkey != nil && s.valkey.Raw() != nil {
+		_ = SetUserDeletedCache(ctx, s.valkey, userSession.UserID, false)
+	}
+
 	return Tokens{
 		AccessToken:  accessToken,
 		RefreshToken: refresh,
@@ -225,10 +255,41 @@ func (s *Service) patchUserName(ctx context.Context, uid uuid.UUID, name string)
 }
 
 func (s *Service) deleteUser(ctx context.Context, uid uuid.UUID) error {
-	if err := s.repo.deleteUser(ctx, uid); err != nil {
-		return fmt.Errorf("userService.deleteUser: %w", err)
+	if s.pool != nil {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("userService.deleteUser.begin: %w", err)
+		}
+		defer tx.Rollback(ctx)
+
+		txRepo := s.repo.WithTx(tx)
+		if err = txRepo.deleteUser(ctx, uid); err != nil {
+			return fmt.Errorf("userService.deleteUser: %w", err)
+		}
+		if err = txRepo.deleteAllSessions(ctx, uid); err != nil {
+			return fmt.Errorf("userService.deleteUser.deleteAllSessions: %w", err)
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return fmt.Errorf("userService.deleteUser.commit: %w", err)
+		}
+	} else {
+		if err := s.repo.deleteUser(ctx, uid); err != nil {
+			return fmt.Errorf("userService.deleteUser: %w", err)
+		}
+		if err := s.repo.deleteAllSessions(ctx, uid); err != nil {
+			return fmt.Errorf("userService.deleteUser.deleteAllSessions: %w", err)
+		}
 	}
+
+	if s.valkey != nil && s.valkey.Raw() != nil {
+		_ = SetUserDeletedCache(ctx, s.valkey, uid, true)
+	}
+
 	return nil
+}
+
+func (s *Service) IsUserDeleted(ctx context.Context, uid uuid.UUID) (bool, error) {
+	return CheckUserDeleted(ctx, s.valkey, s.pool, uid)
 }
 
 func (s *Service) updateAvatar(ctx context.Context, uid uuid.UUID, r io.Reader) (uuid.UUID, error) {

@@ -59,6 +59,7 @@ func (r *Repo) findAllCurrentTokens(ctx context.Context, uid uuid.UUID) ([]Sessi
 	}
 	return sessions, nil
 }
+
 func (r *Repo) revokedToken(ctx context.Context, tokenID int64, uid uuid.UUID) error {
 	res, err := r.db.Exec(ctx, "UPDATE user_sessions SET revoked_at = now() WHERE id = $1 AND user_id = $2", tokenID, uid)
 	if err != nil {
@@ -66,6 +67,14 @@ func (r *Repo) revokedToken(ctx context.Context, tokenID int64, uid uuid.UUID) e
 	}
 	if res.RowsAffected() == 0 {
 		return fmt.Errorf("userSessionRepo.revokedToken: %w", storage.ErrNotFound)
+	}
+	return nil
+}
+
+func (r *Repo) deleteAllSessions(ctx context.Context, uid uuid.UUID) error {
+	_, err := r.db.Exec(ctx, "DELETE FROM user_sessions WHERE user_id = $1", uid)
+	if err != nil {
+		return fmt.Errorf("userSessionRepo.deleteAllSessions: %w", storage.ErrRepo(err))
 	}
 	return nil
 }

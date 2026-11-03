@@ -298,7 +298,7 @@ func (r *Repo) getUserForUpdate(ctx context.Context, uid uuid.UUID) (user.User, 
 
 // changeHold передается контекст, uid и изменение changeHold тоесть увеличить на 10 (changeHold=10) или уменьшить на 20 (changeHold=-20)
 func (r *Repo) changeHold(ctx context.Context, uid uuid.UUID, changeHold int) error {
-	res, err := r.db.Exec(ctx, "UPDATE users SET hold = hold + $1 WHERE id = $2 AND deleted_at IS NULL", changeHold, uid)
+	res, err := r.db.Exec(ctx, "UPDATE users SET hold = hold + $1 WHERE id = $2 ", changeHold, uid)
 	if err != nil {
 		return fmt.Errorf("lotRepo.changeHold: %w", storage.ErrRepo(err))
 	}
