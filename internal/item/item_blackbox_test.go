@@ -308,3 +308,42 @@ func TestGiftItem_ActiveLot(t *testing.T) {
 		t.Errorf("giftItem allowed transferring item in active auction lot (expected to block)")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// 7. GiftItem: Approved Lot
+// -----------------------------------------------------------------------------
+func TestGiftItem_ApprovedLot(t *testing.T) {
+	service, pool, _ := setupItemTest(t)
+	ctx := context.Background()
+
+	userA := createTestUser(t, pool)
+	userB := createTestUser(t, pool)
+	itemID := createTestItem(t, pool, userA)
+	lotID := createTestLot(t, pool, userA, itemID, "approved")
+
+	desc := "Gift item in approved lot"
+	err := service.giftItem(ctx, userA, userB, itemID, desc)
+
+	var itemOwner uuid.UUID
+	_ = pool.QueryRow(ctx, "SELECT owner_id FROM items WHERE id = $1", itemID).Scan(&itemOwner)
+
+	var lotStatus string
+	var lotSellerID uuid.UUID
+	lotErr := pool.QueryRow(ctx, "SELECT status, seller_id FROM lots WHERE id = $1", lotID).Scan(&lotStatus, &lotSellerID)
+
+	t.Logf("giftItem result: err=%v, itemOwner=%v, lotErr=%v, lotStatus=%v, lotSellerID=%v", err, itemOwner, lotErr, lotStatus, lotSellerID)
+
+	if err != nil {
+		t.Logf("giftItem blocked gifting item in approved lot: %v", err)
+	} else {
+		t.Logf("giftItem succeeded for item in approved lot: item transferred to %v", itemOwner)
+		if lotStatus == "approved" && lotSellerID == userA {
+			t.Errorf("item was gifted to %v, but approved lot #%d still retained by previous owner %v in status %q", itemOwner, lotID, lotSellerID, lotStatus)
+		} else if lotStatus == "cancelled" {
+			t.Logf("approved lot was automatically cancelled when item was gifted")
+		} else if lotErr != nil {
+			t.Logf("approved lot was deleted when item was gifted")
+		}
+	}
+}
+

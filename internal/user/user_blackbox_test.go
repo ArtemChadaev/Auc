@@ -13,6 +13,7 @@ import (
 	"uuid"
 
 	"github.com/ArtemChadaev/Auction/cmd/cfg"
+	"github.com/ArtemChadaev/Auction/cmd/storage"
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
 	"github.com/ArtemChadaev/Auction/cmd/valkey"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -579,3 +580,229 @@ func TestAdminTransferFunds_ConcurrentDeadlock(t *testing.T) {
 		}
 	}
 }
+
+// -----------------------------------------------------------------------------
+// 8. Delete User: With Active Hold
+// -----------------------------------------------------------------------------
+func TestDeleteUser_WithActiveHold(t *testing.T) {
+	service, pool, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	// User has balance=1000, hold=500 (has active bids in an auction)
+	uid, _, _ := createTestUser(t, pool, 1000, 500)
+
+	err := service.deleteUser(ctx, uid)
+
+	var deletedAt *time.Time
+	var dbBalance, dbHold int
+	qErr := pool.QueryRow(ctx, "SELECT deleted_at, balance, hold FROM users WHERE id = $1", uid).Scan(&deletedAt, &dbBalance, &dbHold)
+	if qErr != nil {
+		t.Fatalf("failed to query user from DB: %v", qErr)
+	}
+
+	if err != nil {
+		t.Logf("deleteUser correctly prevented deleting user with active hold (err: %v)", err)
+		if deletedAt != nil {
+			t.Errorf("deleteUser returned error %v, but user was still marked deleted at %v", err, *deletedAt)
+		}
+	} else {
+		t.Logf("deleteUser succeeded: user marked deleted_at=%v, balance=%d, hold=%d", deletedAt, dbBalance, dbHold)
+		if deletedAt != nil && dbHold > 0 {
+			t.Errorf("deleteUser allowed account deletion with dangling hold=%d (balance=%d, deleted_at=%v)", dbHold, dbBalance, *deletedAt)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 9. AuthPassword with Deleted User
+// -----------------------------------------------------------------------------
+func TestAuthPassword_DeletedUser(t *testing.T) {
+	service, _, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	uid := uuid.New()
+	email := fmt.Sprintf("auth_del_%s@example.com", strings.ReplaceAll(uid.String(), "-", ""))
+	password := "StrongPass123!"
+	dev := Device{OS: "macOS", Browser: "Chrome"}
+
+	// Register user
+	tokens, err := service.register(ctx, &uid, "Deleted User Auth", email, password, dev)
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	if tokens.AccessToken == "" {
+		t.Fatalf("expected non-empty access token")
+	}
+
+	// Verify authPassword succeeds before deletion
+	authTokens, err := service.authPassword(ctx, email, password, dev)
+	if err != nil {
+		t.Fatalf("authPassword before deletion failed: %v", err)
+	}
+	if authTokens.AccessToken == "" {
+		t.Fatalf("expected non-empty access token from authPassword")
+	}
+
+	// Delete user
+	err = service.deleteUser(ctx, uid)
+	if err != nil {
+		t.Fatalf("deleteUser failed: %v", err)
+	}
+
+	// Call authPassword with deleted user's credentials
+	_, err = service.authPassword(ctx, email, password, dev)
+	if err == nil {
+		t.Fatalf("authPassword succeeded for deleted user, expected ErrUserDeleted")
+	}
+	if !errors.Is(err, ErrUserDeleted) {
+		t.Errorf("expected error wrapping ErrUserDeleted, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 10. AuthRefresh with Deleted User
+// -----------------------------------------------------------------------------
+func TestAuthRefresh_DeletedUser(t *testing.T) {
+	service, _, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	uid := uuid.New()
+	email := fmt.Sprintf("ref_del_%s@example.com", strings.ReplaceAll(uid.String(), "-", ""))
+	password := "StrongPass123!"
+	dev := Device{OS: "macOS", Browser: "Chrome"}
+
+	tokens, err := service.register(ctx, &uid, "Deleted User Refresh", email, password, dev)
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	if tokens.RefreshToken == "" {
+		t.Fatalf("expected non-empty refresh token")
+	}
+
+	// Delete user
+	err = service.deleteUser(ctx, uid)
+	if err != nil {
+		t.Fatalf("deleteUser failed: %v", err)
+	}
+
+	// Attempt authRefresh with the refresh token
+	_, err = service.authRefresh(ctx, tokens.RefreshToken)
+	if err == nil {
+		t.Fatalf("authRefresh succeeded for deleted user, expected ErrUserDeleted")
+	}
+	if !errors.Is(err, ErrUserDeleted) {
+		t.Errorf("expected error wrapping ErrUserDeleted, got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 11. Reused Email After Deletion
+// -----------------------------------------------------------------------------
+func TestRegister_ReusedEmailAfterDeletion(t *testing.T) {
+	service, _, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	uid1 := uuid.New()
+	email := fmt.Sprintf("reuse_%s@example.com", strings.ReplaceAll(uid1.String(), "-", ""))
+	pass1 := "Pass1!Strong"
+	pass2 := "Pass2!Strong"
+	dev := Device{OS: "macOS", Browser: "Chrome"}
+
+	// User 1 registers with reuse_email and Pass1!
+	_, err := service.register(ctx, &uid1, "User One", email, pass1, dev)
+	if err != nil {
+		t.Fatalf("user 1 register failed: %v", err)
+	}
+
+	// User 1 deletes their account
+	err = service.deleteUser(ctx, uid1)
+	if err != nil {
+		t.Fatalf("user 1 deleteUser failed: %v", err)
+	}
+
+	// User 2 registers with the same email and new password Pass2!
+	uid2 := uuid.New()
+	_, err = service.register(ctx, &uid2, "User Two", email, pass2, dev)
+	if err != nil {
+		t.Fatalf("user 2 register with reused email failed: %v", err)
+	}
+
+	// Attempt authPassword with Pass2! -> must succeed (active account takes precedence)
+	authTokens2, err := service.authPassword(ctx, email, pass2, dev)
+	if err != nil {
+		t.Fatalf("authPassword with Pass2! failed: %v", err)
+	}
+	if authTokens2.AccessToken == "" {
+		t.Errorf("expected non-empty access token for User 2")
+	}
+
+	// Attempt authPassword with Pass1! -> must fail
+	_, err = service.authPassword(ctx, email, pass1, dev)
+	if err == nil {
+		t.Errorf("authPassword with old password Pass1! succeeded, expected error")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 12. IsUserDeleted: Cache and DB
+// -----------------------------------------------------------------------------
+func TestIsUserDeleted_CacheAndDB(t *testing.T) {
+	service, pool, _ := setupUserTest(t)
+	ctx := context.Background()
+
+	// 1. Active user -> returns false, nil
+	uidActive, _, _ := createTestUser(t, pool, 100, 0)
+	deleted, err := service.IsUserDeleted(ctx, uidActive)
+	if err != nil {
+		t.Fatalf("IsUserDeleted(active) failed: %v", err)
+	}
+	if deleted {
+		t.Errorf("IsUserDeleted(active) returned true, expected false")
+	}
+
+	// Cache verification for active user
+	cachedDeleted, err := service.IsUserDeleted(ctx, uidActive)
+	if err != nil {
+		t.Fatalf("IsUserDeleted(active cached) failed: %v", err)
+	}
+	if cachedDeleted {
+		t.Errorf("IsUserDeleted(active cached) returned true, expected false")
+	}
+
+	// 2. Soft-deleted user -> returns true, nil
+	uidDeleted, _, _ := createTestUser(t, pool, 100, 0)
+	err = service.deleteUser(ctx, uidDeleted)
+	if err != nil {
+		t.Fatalf("deleteUser failed: %v", err)
+	}
+
+	deleted, err = service.IsUserDeleted(ctx, uidDeleted)
+	if err != nil {
+		t.Fatalf("IsUserDeleted(deleted) failed: %v", err)
+	}
+	if !deleted {
+		t.Errorf("IsUserDeleted(deleted) returned false, expected true")
+	}
+
+	// Cache verification for deleted user
+	cachedDeleted, err = service.IsUserDeleted(ctx, uidDeleted)
+	if err != nil {
+		t.Fatalf("IsUserDeleted(deleted cached) failed: %v", err)
+	}
+	if !cachedDeleted {
+		t.Errorf("IsUserDeleted(deleted cached) returned false, expected true")
+	}
+
+	// 3. Non-existent user -> returns true, storage.ErrNotFound (or error)
+	nonExistentUID := uuid.New()
+	deletedNonExistent, err := service.IsUserDeleted(ctx, nonExistentUID)
+	if err == nil {
+		t.Errorf("IsUserDeleted(nonExistent) expected error, got nil")
+	} else if !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("IsUserDeleted(nonExistent) expected storage.ErrNotFound, got: %v", err)
+	}
+	if !deletedNonExistent {
+		t.Errorf("IsUserDeleted(nonExistent) returned false, expected true")
+	}
+}
+

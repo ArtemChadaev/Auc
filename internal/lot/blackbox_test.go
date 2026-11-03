@@ -1257,3 +1257,108 @@ func TestFinishLot_DeletedWinner(t *testing.T) {
 	}
 }
 
+// -----------------------------------------------------------------------------
+// 21. finishLot: Deleted seller
+// -----------------------------------------------------------------------------
+func TestFinishLot_DeletedSeller(t *testing.T) {
+	service, pool, _ := setupLotTest(t)
+	ctx := context.Background()
+
+	sellerID := createTestUser(t, pool, 1000, 0)
+	itemID := createTestItem(t, pool, sellerID)
+	futureEnd := time.Now().Add(2 * time.Hour)
+	lotID := createTestLot(t, pool, sellerID, itemID, "active", 100, 10, &futureEnd)
+
+	bidderID := createTestUser(t, pool, 1000, 0)
+	winningAmount := 150
+	if err := service.bid(ctx, lotID, bidderID, winningAmount); err != nil {
+		t.Fatalf("bid failed: %v", err)
+	}
+
+	// Seller account is soft-deleted
+	_, err := pool.Exec(ctx, "UPDATE users SET deleted_at = now() WHERE id = $1", sellerID)
+	if err != nil {
+		t.Fatalf("failed to soft-delete seller: %v", err)
+	}
+
+	// Expire lot
+	_, err = pool.Exec(ctx, "UPDATE lots SET ends_at = now() - interval '15 seconds' WHERE id = $1", lotID)
+	if err != nil {
+		t.Fatalf("failed to expire lot: %v", err)
+	}
+
+	// Finish lot
+	err = service.finishLot(ctx, lotID)
+	if err != nil {
+		t.Errorf("finishLot failed when seller is soft-deleted: %v", err)
+	} else {
+		t.Logf("finishLot succeeded when seller is soft-deleted")
+		var sellerBal int
+		_ = pool.QueryRow(ctx, "SELECT balance FROM users WHERE id = $1", sellerID).Scan(&sellerBal)
+		if sellerBal != 1000+winningAmount {
+			t.Errorf("expected seller balance %d, got %d", 1000+winningAmount, sellerBal)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 22. AdminCancelLot: Deleted bidder
+// -----------------------------------------------------------------------------
+func TestAdminCancelLot_DeletedBidder(t *testing.T) {
+	service, pool, _ := setupLotTest(t)
+	ctx := context.Background()
+
+	sellerID := createTestUser(t, pool, 1000, 0)
+	itemID := createTestItem(t, pool, sellerID)
+	futureEnd := time.Now().Add(2 * time.Hour)
+	lotID := createTestLot(t, pool, sellerID, itemID, "active", 100, 10, &futureEnd)
+
+	bidderID := createTestUser(t, pool, 1000, 0)
+	bidAmount := 150
+	if err := service.bid(ctx, lotID, bidderID, bidAmount); err != nil {
+		t.Fatalf("bid failed: %v", err)
+	}
+
+	// Bidder is soft-deleted
+	_, err := pool.Exec(ctx, "UPDATE users SET deleted_at = now() WHERE id = $1", bidderID)
+	if err != nil {
+		t.Fatalf("failed to soft-delete bidder: %v", err)
+	}
+
+	// Admin calls AdminCancelLot
+	err = service.AdminCancelLot(ctx, lotID)
+	if err != nil {
+		t.Errorf("AdminCancelLot failed when bidder is soft-deleted: %v", err)
+	} else {
+		t.Logf("AdminCancelLot succeeded when bidder is soft-deleted")
+		var status string
+		_ = pool.QueryRow(ctx, "SELECT status FROM lots WHERE id = $1", lotID).Scan(&status)
+		if status != "cancelled" {
+			t.Errorf("expected lot status 'cancelled', got %q", status)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------------
+// 23. activateLot: Past endsAt
+// -----------------------------------------------------------------------------
+func TestActivateLot_PastEndsAt(t *testing.T) {
+	service, pool, _ := setupLotTest(t)
+	ctx := context.Background()
+
+	sellerID := createTestUser(t, pool, 1000, 0)
+	itemID := createTestItem(t, pool, sellerID)
+	lotID := createTestLot(t, pool, sellerID, itemID, "approved", 100, 10, nil)
+
+	now := time.Now()
+	pastEndsAt := time.Now().Add(-1 * time.Hour)
+
+	activeLot, err := service.activateLot(ctx, lotID, sellerID, &now, &pastEndsAt)
+	if err != nil {
+		t.Logf("activateLot correctly rejected lot with ends_at in the past: %v", err)
+	} else {
+		t.Errorf("activateLot allowed activating lot with ends_at in the past: lot status=%s", activeLot.Status)
+	}
+}
+
+
