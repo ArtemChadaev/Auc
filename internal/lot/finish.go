@@ -105,11 +105,11 @@ func (s *Service) finishLot(ctx context.Context, idLot int64) error {
 	}
 
 	// 2. Списываем сумму и уменьшаем hold у победителя
-	if err = txRepo.changeBalance(ctx, winnerID, -amount); err != nil {
-		return fmt.Errorf("finishLot.changeBalance winner: %w", err)
-	}
 	if err = txRepo.changeHold(ctx, winnerID, -amount); err != nil {
 		return fmt.Errorf("finishLot.changeHold winner: %w", err)
+	}
+	if err = txRepo.changeBalance(ctx, winnerID, -amount); err != nil {
+		return fmt.Errorf("finishLot.changeBalance winner: %w", err)
 	}
 
 	// 3. Зачисляем сумму продавцу

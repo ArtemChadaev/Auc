@@ -30,6 +30,9 @@ var (
 	ErrImageNotSquare       = apperr.NewAppErrorString("image must be square", -4)
 	ErrInvalidImage         = apperr.NewAppErrorString("invalid image data", -4)
 	ErrFreeCoinLimitReached = apperr.NewAppErrorString("free coins limit reached: only once per day allowed", -4)
+	ErrInsufficientBalance  = apperr.NewAppErrorString("insufficient balance", -4)
+	ErrSameUser             = apperr.NewAppErrorString("sender and receiver must be different users", -4)
+	ErrInvalidAmount        = apperr.NewAppErrorString("amount must be non-zero", -4)
 )
 
 type Service struct {
@@ -354,14 +357,61 @@ func (s *Service) claimFreeCoin(ctx context.Context, uid uuid.UUID) (User, error
 		}
 	}
 
-	if err := s.changeBalance(ctx, uid, 1000); err != nil {
-		// При сбое БД удаляем ключ, чтобы пользователь не потерял бонус
-		if s.valkey != nil && s.valkey.Raw() != nil {
-			delCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			_ = s.valkey.Raw().Del(delCtx, redisKey).Err()
+	var newBalance int
+	if s.pool != nil {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			if s.valkey != nil && s.valkey.Raw() != nil {
+				delCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = s.valkey.Raw().Del(delCtx, redisKey).Err()
+			}
+			return User{}, fmt.Errorf("userService.claimFreeCoin: %w", err)
 		}
-		return User{}, fmt.Errorf("userService.claimFreeCoin: %w", err)
+		defer tx.Rollback(ctx)
+		txRepo := s.repo.WithTx(tx)
+
+		newBalance, err = txRepo.changeBalance(ctx, uid, 1000)
+		if err != nil {
+			if s.valkey != nil && s.valkey.Raw() != nil {
+				delCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = s.valkey.Raw().Del(delCtx, redisKey).Err()
+			}
+			return User{}, fmt.Errorf("userService.claimFreeCoin: %w", err)
+		}
+
+		if err = txRepo.createLedgerEntry(ctx, uid, 1000, newBalance, "top_up", nil); err != nil {
+			if s.valkey != nil && s.valkey.Raw() != nil {
+				delCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = s.valkey.Raw().Del(delCtx, redisKey).Err()
+			}
+			return User{}, fmt.Errorf("userService.claimFreeCoin.createLedgerEntry: %w", err)
+		}
+
+		if err = tx.Commit(ctx); err != nil {
+			if s.valkey != nil && s.valkey.Raw() != nil {
+				delCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = s.valkey.Raw().Del(delCtx, redisKey).Err()
+			}
+			return User{}, fmt.Errorf("userService.claimFreeCoin: %w", err)
+		}
+	} else {
+		var err error
+		newBalance, err = s.repo.changeBalance(ctx, uid, 1000)
+		if err != nil {
+			if s.valkey != nil && s.valkey.Raw() != nil {
+				delCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = s.valkey.Raw().Del(delCtx, redisKey).Err()
+			}
+			return User{}, fmt.Errorf("userService.claimFreeCoin: %w", err)
+		}
+		if err = s.repo.createLedgerEntry(ctx, uid, 1000, newBalance, "top_up", nil); err != nil {
+			return User{}, fmt.Errorf("userService.claimFreeCoin.createLedgerEntry: %w", err)
+		}
 	}
 
 	user, err := s.getUser(ctx, uid)
@@ -374,4 +424,110 @@ func (s *Service) claimFreeCoin(ctx context.Context, uid uuid.UUID) (User, error
 
 func (s *Service) getTransactions(ctx context.Context, uid uuid.UUID) ([]LedgerEntry, error) {
 	return s.repo.getLedgerEntries(ctx, uid)
+}
+
+// AdminChangeBalance начисляет или списывает средства пользователю администратором с созданием записи в журнале.
+func (s *Service) AdminChangeBalance(ctx context.Context, targetUID uuid.UUID, amount int) (int, error) {
+	if amount == 0 {
+		return 0, fmt.Errorf("userService.AdminChangeBalance: %w", ErrInvalidAmount)
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("userService.AdminChangeBalance.begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	txRepo := s.repo.WithTx(tx)
+
+	targetUser, err := txRepo.getUserForUpdate(ctx, targetUID)
+	if err != nil {
+		return 0, fmt.Errorf("userService.AdminChangeBalance.getUserForUpdate: %w", err)
+	}
+
+	if amount < 0 && targetUser.Balance+amount < targetUser.Hold {
+		return 0, fmt.Errorf("userService.AdminChangeBalance: %w", ErrInsufficientBalance)
+	}
+
+	newBalance, err := txRepo.changeBalance(ctx, targetUID, amount)
+	if err != nil {
+		return 0, fmt.Errorf("userService.AdminChangeBalance.changeBalance: %w", err)
+	}
+
+	entryType := "top_up"
+	if amount < 0 {
+		entryType = "transfer_to_seller"
+	}
+
+	if err = txRepo.createLedgerEntry(ctx, targetUID, amount, newBalance, entryType, nil); err != nil {
+		return 0, fmt.Errorf("userService.AdminChangeBalance.createLedgerEntry: %w", err)
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("userService.AdminChangeBalance.commit: %w", err)
+	}
+	return newBalance, nil
+}
+
+// AdminTransferFunds переводит средства между пользователями с защитой от deadlock (сортировка по UUID) и записью в журнал.
+func (s *Service) AdminTransferFunds(ctx context.Context, fromUID, toUID uuid.UUID, amount int) error {
+	if fromUID == toUID {
+		return fmt.Errorf("userService.AdminTransferFunds: %w", ErrSameUser)
+	}
+	if amount <= 0 {
+		return fmt.Errorf("userService.AdminTransferFunds: %w", ErrInvalidAmount)
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("userService.AdminTransferFunds.begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	txRepo := s.repo.WithTx(tx)
+
+	// Сортировка по UUID для исключения deadlock при одновременных переводах
+	firstUID, secondUID := fromUID, toUID
+	if bytes.Compare(firstUID[:], secondUID[:]) > 0 {
+		firstUID, secondUID = secondUID, firstUID
+	}
+
+	u1, err := txRepo.getUserForUpdate(ctx, firstUID)
+	if err != nil {
+		return fmt.Errorf("userService.AdminTransferFunds.getUserForUpdate u1: %w", err)
+	}
+	u2, err := txRepo.getUserForUpdate(ctx, secondUID)
+	if err != nil {
+		return fmt.Errorf("userService.AdminTransferFunds.getUserForUpdate u2: %w", err)
+	}
+
+	var fromUser User
+	if u1.ID == fromUID {
+		fromUser = u1
+	} else {
+		fromUser = u2
+	}
+
+	if fromUser.Balance-fromUser.Hold < amount {
+		return fmt.Errorf("userService.AdminTransferFunds: %w", ErrInsufficientBalance)
+	}
+
+	fromNewBalance, err := txRepo.changeBalance(ctx, fromUID, -amount)
+	if err != nil {
+		return fmt.Errorf("userService.AdminTransferFunds.changeBalance sender: %w", err)
+	}
+	if err = txRepo.createLedgerEntry(ctx, fromUID, -amount, fromNewBalance, "transfer_to_seller", nil); err != nil {
+		return fmt.Errorf("userService.AdminTransferFunds.createLedgerEntry sender: %w", err)
+	}
+
+	toNewBalance, err := txRepo.changeBalance(ctx, toUID, amount)
+	if err != nil {
+		return fmt.Errorf("userService.AdminTransferFunds.changeBalance recipient: %w", err)
+	}
+	if err = txRepo.createLedgerEntry(ctx, toUID, amount, toNewBalance, "payout_of_winnings", nil); err != nil {
+		return fmt.Errorf("userService.AdminTransferFunds.createLedgerEntry recipient: %w", err)
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("userService.AdminTransferFunds.commit: %w", err)
+	}
+	return nil
 }

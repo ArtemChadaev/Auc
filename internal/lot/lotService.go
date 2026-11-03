@@ -17,6 +17,7 @@ import (
 	"github.com/ArtemChadaev/Auction/cmd/storageS3"
 	"github.com/ArtemChadaev/Auction/cmd/valkey"
 	"github.com/ArtemChadaev/Auction/internal/user"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -167,8 +168,110 @@ func (s *Service) cancelLot(ctx context.Context, id int64, sellerID uuid.UUID) e
 	if id <= 0 {
 		return fmt.Errorf("lotService.cancelLot: %w", ErrInvalidID)
 	}
+	if s.pool != nil {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("lotService.cancelLot: %w", err)
+		}
+		defer tx.Rollback(ctx)
+		txRepo := s.repo.WithTx(tx)
+
+		lot, err := txRepo.getLotForCancel(ctx, id)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, storage.ErrNotFound) {
+				return storage.ErrNotFound
+			}
+			return fmt.Errorf("lotService.cancelLot: %w", err)
+		}
+
+		if lot.SellerID != sellerID {
+			return ErrForbidden
+		}
+
+		canCancel := false
+		if lot.Status == Draft || lot.Status == Approved {
+			canCancel = true
+		} else if lot.Status == Active && lot.StartedAt != nil && lot.StartedAt.After(time.Now().Add(time.Hour)) {
+			canCancel = true
+		}
+
+		if !canCancel {
+			return fmt.Errorf("lotService.cancelLot: cannot cancel lot in status %s: %w", lot.Status, storage.ErrNotFound)
+		}
+
+		bid, err := txRepo.getLastBid(ctx, id)
+		if err != nil && !errors.Is(err, storage.ErrNotFound) && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("lotService.cancelLot: %w", err)
+		}
+		if err == nil && bid.UserId != uuid.Nil() && bid.Amount > 0 {
+			_, err = txRepo.getUserForUpdate(ctx, bid.UserId)
+			if err != nil {
+				return fmt.Errorf("lotService.cancelLot.getUserForUpdate: %w", err)
+			}
+			if err = txRepo.changeHold(ctx, bid.UserId, -bid.Amount); err != nil {
+				return fmt.Errorf("lotService.cancelLot.changeHold: %w", err)
+			}
+		}
+
+		if err = txRepo.setStatusCancelled(ctx, id); err != nil {
+			return fmt.Errorf("lotService.cancelLot: %w", err)
+		}
+
+		if err = tx.Commit(ctx); err != nil {
+			return fmt.Errorf("lotService.cancelLot: %w", err)
+		}
+		return nil
+	}
+
 	if err := s.repo.cancel(ctx, id, sellerID); err != nil {
 		return fmt.Errorf("lotService.cancelLot: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) AdminCancelLot(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return fmt.Errorf("lotService.AdminCancelLot: %w", ErrInvalidID)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("lotService.AdminCancelLot: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	txRepo := s.repo.WithTx(tx)
+
+	lot, err := txRepo.getLotForCancel(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, storage.ErrNotFound) {
+			return storage.ErrNotFound
+		}
+		return fmt.Errorf("lotService.AdminCancelLot: %w", err)
+	}
+
+	if lot.Status == Finished || lot.Status == Cancelled {
+		return fmt.Errorf("lotService.AdminCancelLot: cannot cancel lot in status %s: %w", lot.Status, storage.ErrNotFound)
+	}
+
+	bid, err := txRepo.getLastBid(ctx, id)
+	if err != nil && !errors.Is(err, storage.ErrNotFound) && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("lotService.AdminCancelLot: %w", err)
+	}
+	if err == nil && bid.UserId != uuid.Nil() && bid.Amount > 0 {
+		_, err = txRepo.getUserForUpdate(ctx, bid.UserId)
+		if err != nil {
+			return fmt.Errorf("lotService.AdminCancelLot.getUserForUpdate: %w", err)
+		}
+		if err = txRepo.changeHold(ctx, bid.UserId, -bid.Amount); err != nil {
+			return fmt.Errorf("lotService.AdminCancelLot.changeHold: %w", err)
+		}
+	}
+
+	if err = txRepo.setStatusCancelled(ctx, id); err != nil {
+		return fmt.Errorf("lotService.AdminCancelLot: %w", err)
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("lotService.AdminCancelLot: %w", err)
 	}
 	return nil
 }

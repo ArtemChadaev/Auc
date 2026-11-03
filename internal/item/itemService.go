@@ -95,3 +95,51 @@ func (s *Service) NewOwnerWhoWinLot(ctx context.Context, uid, newOwner uuid.UUID
 func (s *Service) hasHash(ctx context.Context, hash string) (bool, error) {
 	return s.repo.hasHash(ctx, hash)
 }
+
+// AdminTransferItem передает предмет новому владельцу администратором с добавлением истории перемещения
+func (s *Service) AdminTransferItem(ctx context.Context, itemID int64, newOwner uuid.UUID, description string) error {
+	if itemID <= 0 || newOwner == uuid.Nil() {
+		return fmt.Errorf("itemService.AdminTransferItem: invalid itemID or newOwner")
+	}
+	if description == "" {
+		description = "Передача администратором"
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("itemService.AdminTransferItem.begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	txRepo := s.repo.withTx(tx)
+
+	// Проверяем, что предмет не находится в активном аукционе
+	var activeLotExists bool
+	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM lots WHERE item_id = $1 AND status = 'active')", itemID).Scan(&activeLotExists)
+	if err != nil {
+		return fmt.Errorf("itemService.AdminTransferItem.checkActiveLot: %w", err)
+	}
+	if activeLotExists {
+		return fmt.Errorf("itemService.AdminTransferItem: cannot transfer item that is in an active lot")
+	}
+
+	oldOwner, err := txRepo.getOwnerForUpdate(ctx, itemID)
+	if err != nil {
+		return fmt.Errorf("itemService.AdminTransferItem.getOwnerForUpdate: %w", err)
+	}
+	if oldOwner == newOwner {
+		return fmt.Errorf("itemService.AdminTransferItem: new owner is same as current owner")
+	}
+
+	if err = txRepo.newOwner(ctx, newOwner, itemID); err != nil {
+		return fmt.Errorf("itemService.AdminTransferItem.newOwner: %w", err)
+	}
+
+	if err = txRepo.newHistory(ctx, itemID, oldOwner, newOwner, nil, &description); err != nil {
+		return fmt.Errorf("itemService.AdminTransferItem.newHistory: %w", err)
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("itemService.AdminTransferItem.commit: %w", apperr.NewAppError(err, 8))
+	}
+	return nil
+}

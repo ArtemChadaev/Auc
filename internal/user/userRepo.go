@@ -178,3 +178,12 @@ func (r *Repo) getLedgerEntries(ctx context.Context, uid uuid.UUID) ([]LedgerEnt
 	}
 	return entries, nil
 }
+func (r *Repo) getUserForUpdate(ctx context.Context, uid uuid.UUID) (User, error) {
+	var user User
+	row := r.db.QueryRow(ctx, "SELECT id, name, avatar_id, email, deleted_at, balance, hold, created_at, role FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", uid)
+	err := row.Scan(&user.ID, &user.Name, &user.AvatarID, &user.Email, &user.DeletedAt, &user.Balance, &user.Hold, &user.CreatedAt, &user.Role)
+	if err != nil {
+		return user, fmt.Errorf("userRepo.getUserForUpdate: %w", storage.ErrRepo(err))
+	}
+	return user, nil
+}

@@ -549,14 +549,139 @@ func (h *Handler) getTransactions(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteResponse(w, httpx.Response{Code: http.StatusOK, Data: entries})
 }
 
-func (h *Handler) RoutesUser(authChain alice.Chain) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /me", h.getUser)
-	mux.HandleFunc("PATCH /name", h.patchUserName)
-	mux.HandleFunc("DELETE /me", h.deleteUser)
-	mux.HandleFunc("PUT /me/avatar", h.updateAvatar)
-	mux.HandleFunc("GET /me/freeCoin", h.freeCoin)
-	mux.HandleFunc("GET /transactions", h.getTransactions)
+type adminBalanceReq struct {
+	UserID uuid.UUID `json:"user_id"`
+	Amount int       `json:"amount"`
+	Action string    `json:"action,omitempty"`
+}
 
-	return authChain.Then(mux)
+type adminTransferReq struct {
+	FromUserID uuid.UUID `json:"from_user_id"`
+	ToUserID   uuid.UUID `json:"to_user_id"`
+	Amount     int       `json:"amount"`
+}
+
+// adminChangeBalance начисляет или списывает средства пользователю администратором.
+//
+// @Summary Списание / начисление средств пользователю
+// @Description Позволяет администратору начислять (+amount) или списывать (-amount) средства с баланса пользователя
+// @Tags user
+// @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
+// @Accept json
+// @Produce json
+// @Param input body adminBalanceReq true "Параметры изменения баланса"
+// @Success 200 {object} httpx.Response "Баланс успешно обновлен"
+// @Failure 400 {object} httpx.Response "Некорректная сумма или недостаточно средств"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 403 {object} httpx.Response "Требуются права администратора"
+// @Failure 404 {object} httpx.Response "Пользователь не найден"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/user/admin/balance [post]
+func (h *Handler) adminChangeBalance(w http.ResponseWriter, r *http.Request) {
+	req, err := httpx.DecodeJSON[adminBalanceReq](w, r)
+	if err != nil {
+		return
+	}
+	if req.UserID == uuid.Nil() || req.Amount == 0 {
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		return
+	}
+	amount := req.Amount
+	if strings.EqualFold(req.Action, "deduct") || strings.EqualFold(req.Action, "withdraw") || strings.EqualFold(req.Action, "debit") {
+		if amount > 0 {
+			amount = -amount
+		}
+	}
+
+	newBalance, err := h.service.AdminChangeBalance(r.Context(), req.UserID, amount)
+	if err != nil {
+		apperr.Log(r.Context(), "userHandler.adminChangeBalance", err)
+		if errors.Is(err, ErrInsufficientBalance) || errors.Is(err, ErrInvalidAmount) {
+			httpx.WriteResponse(w, httpx.Response{
+				Code:  http.StatusBadRequest,
+				Error: err.Error(),
+			})
+			return
+		}
+		if errors.Is(err, storage.ErrNotFound) {
+			httpx.WriteResponse(w, httpx.ErrRespNotFound)
+			return
+		}
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+		return
+	}
+
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+		Data: map[string]any{"balance": newBalance},
+	})
+}
+
+// adminTransferFunds переводит средства между двумя пользователями администратором.
+//
+// @Summary Перевод средств между пользователями
+// @Description Позволяет администратору перевести средства от одного пользователя другому с созданием проводок в ledger
+// @Tags user
+// @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
+// @Accept json
+// @Produce json
+// @Param input body adminTransferReq true "Параметры перевода средств"
+// @Success 200 {object} httpx.Response "Перевод успешно выполнен"
+// @Failure 400 {object} httpx.Response "Некорректная сумма или недостаточно средств"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 403 {object} httpx.Response "Требуются права администратора"
+// @Failure 404 {object} httpx.Response "Пользователь не найден"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/user/admin/transfer [post]
+func (h *Handler) adminTransferFunds(w http.ResponseWriter, r *http.Request) {
+	req, err := httpx.DecodeJSON[adminTransferReq](w, r)
+	if err != nil {
+		return
+	}
+	if req.FromUserID == uuid.Nil() || req.ToUserID == uuid.Nil() || req.Amount <= 0 {
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		return
+	}
+
+	err = h.service.AdminTransferFunds(r.Context(), req.FromUserID, req.ToUserID, req.Amount)
+	if err != nil {
+		apperr.Log(r.Context(), "userHandler.adminTransferFunds", err)
+		if errors.Is(err, ErrInsufficientBalance) || errors.Is(err, ErrSameUser) || errors.Is(err, ErrInvalidAmount) {
+			httpx.WriteResponse(w, httpx.Response{
+				Code:  http.StatusBadRequest,
+				Error: err.Error(),
+			})
+			return
+		}
+		if errors.Is(err, storage.ErrNotFound) {
+			httpx.WriteResponse(w, httpx.ErrRespNotFound)
+			return
+		}
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+		return
+	}
+
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+	})
+}
+
+func (h *Handler) RoutesUser(authChain alice.Chain, adminChain alice.Chain) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("GET /me", authChain.ThenFunc(h.getUser))
+	mux.Handle("PATCH /name", authChain.ThenFunc(h.patchUserName))
+	mux.Handle("DELETE /me", authChain.ThenFunc(h.deleteUser))
+	mux.Handle("PUT /me/avatar", authChain.ThenFunc(h.updateAvatar))
+	mux.Handle("GET /me/freeCoin", authChain.ThenFunc(h.freeCoin))
+	mux.Handle("GET /transactions", authChain.ThenFunc(h.getTransactions))
+
+	// Административные методы
+	mux.Handle("POST /admin/balance", adminChain.ThenFunc(h.adminChangeBalance))
+	mux.Handle("POST /admin/transfer", adminChain.ThenFunc(h.adminTransferFunds))
+	mux.Handle("POST /balance", adminChain.ThenFunc(h.adminChangeBalance))
+	mux.Handle("POST /transfer", adminChain.ThenFunc(h.adminTransferFunds))
+
+	return mux
 }

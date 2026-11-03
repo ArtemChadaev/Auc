@@ -110,14 +110,14 @@ func main() {
 	}
 	userHandler := user.NewHandler(userService)
 	mux.Handle("/api/auth/", http.StripPrefix("/api/auth", userHandler.RoutesAuth(authChain)))
-	mux.Handle("/api/user/", http.StripPrefix("/api/user", userHandler.RoutesUser(authChain)))
+	mux.Handle("/api/user/", http.StripPrefix("/api/user", userHandler.RoutesUser(authChain, adminChain)))
 
 	// item
 	itemService := item.NewService(pool, globalS3, item.NewRepo(pool), vk)
 	go itemService.RecoverPendingUploads(ctx)
 	itemHandler := item.NewHandler(itemService)
 	mux.Handle("/api/upload/", http.StripPrefix("/api/upload", itemHandler.RouterUpload(authChain)))
-	mux.Handle("/api/item/", http.StripPrefix("/api/item", itemHandler.RouterItem(authChain)))
+	mux.Handle("/api/item/", http.StripPrefix("/api/item", itemHandler.RouterItem(authChain, adminChain)))
 
 	// doc
 	docHandler := documents.NewHandler(documents.NewService(documents.NewRepo(pool)))

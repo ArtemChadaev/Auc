@@ -181,7 +181,13 @@ func (r *Repo) list(ctx context.Context) ([]Lot, error) {
 }
 
 func (r *Repo) cancel(ctx context.Context, id int64, sellerId uuid.UUID) error {
-	res, err := r.db.Exec(ctx, "UPDATE lots SET status = $3 WHERE id = $1 AND seller_id = $2 AND (status NOT IN ($4, $5) OR status = $5 AND started_at > now() + INTERVAL '1 hour')", id, sellerId, Cancelled, Finished, Active)
+	res, err := r.db.Exec(ctx, `
+		UPDATE lots 
+		SET status = $1 
+		WHERE id = $2 AND seller_id = $3 
+		  AND (status IN ($4, $5) OR (status = $6 AND started_at > now() + INTERVAL '1 hour'))`,
+		Cancelled, id, sellerId, Draft, Approved, Active,
+	)
 	if err != nil {
 		return fmt.Errorf("lotRepo.cancel: %w", storage.ErrRepo(err))
 	}
@@ -191,12 +197,40 @@ func (r *Repo) cancel(ctx context.Context, id int64, sellerId uuid.UUID) error {
 	return nil
 }
 
+func (r *Repo) getLotForCancel(ctx context.Context, id int64) (Lot, error) {
+	var lot Lot
+	row, err := r.db.Query(ctx, `
+		SELECT id, seller_id, item_id, status, winner_id, start_amount, min_step, finish_amount, title, description, created_at, started_at, ends_at, finished_at 
+		FROM lots 
+		WHERE id = $1 
+		FOR UPDATE`, id)
+	if err != nil {
+		return lot, fmt.Errorf("lotRepo.getLotForCancel: %w", storage.ErrRepo(err))
+	}
+	lot, err = pgx.CollectExactlyOneRow(row, pgx.RowToStructByName[Lot])
+	if err != nil {
+		return lot, fmt.Errorf("lotRepo.getLotForCancel: %w", storage.ErrRepo(err))
+	}
+	return lot, nil
+}
+
+func (r *Repo) setStatusCancelled(ctx context.Context, id int64) error {
+	res, err := r.db.Exec(ctx, "UPDATE lots SET status = $1 WHERE id = $2", Cancelled, id)
+	if err != nil {
+		return fmt.Errorf("lotRepo.setStatusCancelled: %w", storage.ErrRepo(err))
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("lotRepo.setStatusCancelled: %w", storage.ErrNotFound)
+	}
+	return nil
+}
+
 func (r *Repo) getByIdForUpdate(ctx context.Context, id int64) (Lot, error) {
 	var lot Lot
 	row, err := r.db.Query(ctx, `
 		SELECT id, seller_id, item_id, status, winner_id, start_amount, min_step, finish_amount, title, description, created_at, started_at, ends_at, finished_at 
 		FROM lots 
-		WHERE id = $1 AND status = 'active'
+		WHERE id = $1 AND status = 'active' AND (ends_at IS NULL OR ends_at > now())
 		FOR UPDATE`, id)
 	if err != nil {
 		return lot, fmt.Errorf("lotRepo.getByIdForUpdate: %w", storage.ErrRepo(err))

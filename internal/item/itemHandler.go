@@ -455,12 +455,74 @@ func (h *Handler) RouterUpload(authChain alice.Chain) http.Handler {
 	return authChain.Then(mux)
 }
 
-func (h *Handler) RouterItem(authChain alice.Chain) http.Handler {
+func (h *Handler) RouterItem(authChain alice.Chain, adminChain alice.Chain) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /me", h.getMyItems)
-	mux.HandleFunc("GET /{id}/download", h.getDownloadURL)
-	mux.HandleFunc("POST /gift", h.giftItem)
-	return authChain.Then(mux)
+	mux.Handle("GET /me", authChain.ThenFunc(h.getMyItems))
+	mux.Handle("GET /{id}/download", authChain.ThenFunc(h.getDownloadURL))
+	mux.Handle("POST /gift", authChain.ThenFunc(h.giftItem))
+
+	// Административные методы
+	mux.Handle("POST /admin/transfer", adminChain.ThenFunc(h.adminTransferItem))
+	mux.Handle("POST /transfer", adminChain.ThenFunc(h.adminTransferItem))
+
+	return mux
+}
+
+type adminTransferItemReq struct {
+	ItemID      int64     `json:"item_id"`
+	NewOwner    uuid.UUID `json:"new_owner"`
+	ToUserID    uuid.UUID `json:"to_user_id"`
+	Description string    `json:"description,omitempty"`
+}
+
+// adminTransferItem передача предмета новому владельцу администратором с добавлением истории.
+//
+// @Summary Передать предмет администратором
+// @Description Позволяет администратору передать предмет item_id новому владельцу с записью в history_item
+// @Tags item
+// @Security BearerAuth
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
+// @Accept json
+// @Produce json
+// @Param input body adminTransferItemReq true "Параметры передачи предмета"
+// @Success 200 {object} httpx.Response "Предмет успешно передан"
+// @Failure 400 {object} httpx.Response "Некорректные параметры или предмет в активном лоте"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 403 {object} httpx.Response "Требуются права администратора"
+// @Failure 404 {object} httpx.Response "Предмет не найден"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/item/admin/transfer [post]
+func (h *Handler) adminTransferItem(w http.ResponseWriter, r *http.Request) {
+	req, err := httpx.DecodeJSON[adminTransferItemReq](w, r)
+	if err != nil {
+		return
+	}
+	targetUser := req.NewOwner
+	if targetUser == uuid.Nil() {
+		targetUser = req.ToUserID
+	}
+	if req.ItemID <= 0 || targetUser == uuid.Nil() {
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		return
+	}
+
+	err = h.service.AdminTransferItem(r.Context(), req.ItemID, targetUser, req.Description)
+	if err != nil {
+		apperr.Log(r.Context(), "itemHandler.adminTransferItem", err)
+		if errors.Is(err, storage.ErrNotFound) {
+			httpx.WriteResponse(w, httpx.ErrRespNotFound)
+			return
+		}
+		httpx.WriteResponse(w, httpx.Response{
+			Code:  http.StatusBadRequest,
+			Error: err.Error(),
+		})
+		return
+	}
+
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
+	})
 }
 
 type giftItemReq struct {

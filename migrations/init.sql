@@ -70,7 +70,7 @@ create table lots (
     constraint lots_winner_with_amount check ((winner_id is null) = (finish_amount is null))
 );
 
-create unique index ux_lot_item_active on lots (ends_at) WHERE status = 'active';
+create unique index ux_lot_item_active on lots (item_id) WHERE status = 'active';
 create index idx_lots_status_created_at on lots (status, created_at);
 create index idx_lots_seller_status on lots (seller_id, status);
 

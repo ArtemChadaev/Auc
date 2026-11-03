@@ -368,9 +368,18 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.service.cancelLot(r.Context(), id, uid)
+	role, _ := r.Context().Value(cfg.Role).(string)
+	if role == "admin" {
+		err = h.service.AdminCancelLot(r.Context(), id)
+	} else {
+		err = h.service.cancelLot(r.Context(), id, uid)
+	}
 	if err != nil {
 		apperr.Log(r.Context(), "lotHandler.delete", err)
+		if errors.Is(err, ErrForbidden) || errors.Is(err, storage.ErrForbidden) {
+			httpx.WriteResponse(w, httpx.ErrForbidden)
+			return
+		}
 		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, ErrLotNotFound) {
 			httpx.WriteResponse(w, httpx.ErrRespNotFound)
 			return
@@ -465,6 +474,50 @@ func (h *Handler) activate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteResponse(w, httpx.Response{
 		Code: http.StatusOK,
 		Data: lot,
+	})
+}
+
+// adminCancel отменяет лот (включая уже работающий) администратором по ID с возвратом hold последнему участнику.
+//
+// @Summary Отменить лот администратором
+// @Description Позволяет администратору отменить любой активный или работающий лот по ID с безопасным возвратом hold последнему участнику
+// @Tags lot
+// @Security BearerAuth
+// @Param id path int true "ID лота"
+// @Param Idempotency-Key header string false "Ключ идемпотентности"
+// @Produce json
+// @Success 200 {object} httpx.Response "Лот успешно отменен"
+// @Failure 400 {object} httpx.Response "Неверный ID лота"
+// @Failure 401 {object} httpx.Response "Не авторизован"
+// @Failure 403 {object} httpx.Response "Требуются права администратора"
+// @Failure 404 {object} httpx.Response "Лот не найден или не может быть отменен"
+// @Failure 500 {object} httpx.Response "Внутренняя ошибка сервера"
+// @Router /api/lot/{id}/cancel [post]
+func (h *Handler) adminCancel(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+		return
+	}
+
+	err = h.service.AdminCancelLot(r.Context(), id)
+	if err != nil {
+		apperr.Log(r.Context(), "lotHandler.adminCancel", err)
+		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, ErrLotNotFound) {
+			httpx.WriteResponse(w, httpx.ErrRespNotFound)
+			return
+		}
+		if errors.Is(err, ErrInvalidID) {
+			httpx.WriteResponse(w, httpx.ErrRespInvalidReqBody)
+			return
+		}
+		httpx.WriteResponse(w, httpx.ErrRespInternalServer)
+		return
+	}
+
+	httpx.WriteResponse(w, httpx.Response{
+		Code: http.StatusOK,
 	})
 }
 
@@ -653,6 +706,8 @@ func (h *Handler) RouterLot(authChain alice.Chain, adminChain alice.Chain) http.
 	mux.Handle("POST /{id}/activate", authChain.ThenFunc(h.activate))
 
 	mux.Handle("POST /{id}/approved", adminChain.ThenFunc(h.approved))
+	mux.Handle("POST /{id}/cancel", adminChain.ThenFunc(h.adminCancel))
+	mux.Handle("DELETE /{id}/admin", adminChain.ThenFunc(h.adminCancel))
 
 	photoPrefixChain := alice.New(middleware.EndpointRateLimit(h.service.valkey, "get_photo_prefix", 240, 120))
 
